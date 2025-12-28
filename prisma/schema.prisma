@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  avatarUrl    String?  @map("avatar_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  createdGroups Group[]       @relation("GroupCreator")
+  memberships   GroupMember[]
+
+  @@map("users")
+}
+
+// Group model
+model Group {
+  id        String   @id @default(uuid())
+  name      String
+  currency  String   @default("USD")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  creator  User          @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  members  GroupMember[]
+  expenses Expense[]
+
+  @@map("groups")
+}
+
+// GroupMember model (junction table with additional fields)
+model GroupMember {
+  id        String   @id @default(uuid())
+  groupId   String   @map("group_id")
+  userId    String?  @map("user_id") // Nullable for non-registered members
+  name      String // For non-registered members or display name
+  avatarUrl String?  @map("avatar_url")
+  role      String   @default("member") // owner, member
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  // Relations
+  group            Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user             User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  paidExpenses     Expense[]       @relation("ExpensePayer")
+  expenseSplits    ExpenseSplit[]
+
+  @@unique([groupId, userId])
+  @@map("group_members")
+}
+
+// Expense model
+model Expense {
+  id          String   @id @default(uuid())
+  groupId     String   @map("group_id")
+  description String
+  amount      Decimal  @db.Decimal(10, 2)
+  payerId     String   @map("payer_id")
+  splitType   String   @map("split_type") // 'even', 'uneven', 'percentage', 'shares'
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payer  GroupMember    @relation("ExpensePayer", fields: [payerId], references: [id], onDelete: Restrict)
+  splits ExpenseSplit[]
+
+  @@map("expenses")
+}
+
+// ExpenseSplit model
+model ExpenseSplit {
+  id        String   @id @default(uuid())
+  expenseId String   @map("expense_id")
+  memberId  String   @map("member_id")
+  amount    Decimal  @db.Decimal(10, 2)
+  paid      Boolean  @default(false)
+
+  // Relations
+  expense Expense     @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  member  GroupMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([expenseId, memberId])
+  @@map("expense_splits")
+}
