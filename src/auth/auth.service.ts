@@ -5,6 +5,8 @@ import * as bcrypt from 'bcrypt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
+import { GoogleUser } from './interfaces/google-user.interface';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -62,7 +64,7 @@ export class AuthService {
       where: { email },
     });
 
-    if (!user) {
+    if (!user || !user.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -93,7 +95,7 @@ export class AuthService {
   }
 
   async validateUser(userId: string) {
-    return this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -102,5 +104,44 @@ export class AuthService {
         avatarUrl: true,
       },
     });
+    return user;
+  }
+
+  async validateGoogleUser(googleUser: GoogleUser) {
+    const { email, googleId, firstName, lastName, picture } = googleUser;
+
+    let user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (user) {
+      // If user exists but doesn't have googleId, link it
+      if (!user.googleId) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { googleId },
+        });
+      }
+    } else {
+      // Create new user
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          googleId,
+          name: `${firstName} ${lastName}`.trim(),
+          avatarUrl: picture,
+        },
+      });
+    }
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+      },
+      token: this.generateToken(user.id, user.email),
+    };
   }
 }

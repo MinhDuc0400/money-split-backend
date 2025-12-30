@@ -37,6 +37,11 @@ DATABASE_URL="postgresql://user:password@localhost:5432/splitmoney?schema=public
 JWT_SECRET="your-super-secret-jwt-key-change-this-in-production"
 JWT_EXPIRES_IN="7d"
 
+# Google OAuth
+GOOGLE_CLIENT_ID="your-google-client-id"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+GOOGLE_CALLBACK_URL="http://localhost:3000/auth/google/callback"
+
 # Application
 PORT=3000
 NODE_ENV="development"
@@ -73,7 +78,7 @@ The API will be available at `http://localhost:3000`
 
 ### Users
 - User authentication and profile information
-- Fields: id, email, passwordHash, name, avatarUrl, createdAt, updatedAt
+- Fields: id, email, passwordHash (optional), googleId (optional), name, avatarUrl, createdAt, updatedAt
 
 ### Groups
 - Expense groups (e.g., "Trip 2024", "Roommates")
@@ -133,6 +138,19 @@ Content-Type: application/json
 ```
 
 Response: Same as register
+
+#### Google Login
+1. Navigate to `http://localhost:3000/auth/google` in your browser.
+2. After successful login, Google will redirect to `/auth/google/callback`.
+3. The callback will return the user object and JWT token.
+
+```http
+GET /auth/google
+```
+
+```http
+GET /auth/google/callback
+```
 
 ### Protected Routes
 
