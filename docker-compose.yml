@@ -26,6 +26,10 @@ services:
       - JWT_EXPIRES_IN=7d
       - PORT=3000
       - NODE_ENV=development
+      - GOOGLE_CLIENT_ID="1019339763552-o5h12eg8q9m0jupsuesjc2201vr5hfon.apps.googleusercontent.com"
+      - GOOGLE_CLIENT_SECRET="***REMOVED***"
+      - GOOGLE_CALLBACK_URL="http://localhost:3000/auth/google/callback"
+      - FRONTEND_URL="http://localhost:5173"
     depends_on:
       - db
     networks:
