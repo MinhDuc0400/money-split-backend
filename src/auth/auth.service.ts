@@ -43,7 +43,7 @@ export class AuthService {
     });
 
     // Generate JWT token
-    const token = this.generateToken(user.id, user.email);
+    const token = this.generateToken(user.id, user.email, user.name, user.avatarUrl);
 
     return {
       user: {
@@ -76,7 +76,7 @@ export class AuthService {
     }
 
     // Generate JWT token
-    const token = this.generateToken(user.id, user.email);
+    const token = this.generateToken(user.id, user.email, user.name, user.avatarUrl);
 
     return {
       user: {
@@ -89,8 +89,13 @@ export class AuthService {
     };
   }
 
-  private generateToken(userId: string, email: string): string {
-    const payload = { sub: userId, email };
+  private generateToken(userId: string, email: string, name: string, picture?: string | null): string {
+    const payload = { 
+      sub: userId, 
+      email,
+      name,
+      picture: picture || null
+    };
     return this.jwtService.sign(payload);
   }
 
@@ -141,7 +146,7 @@ export class AuthService {
         name: user.name,
         avatarUrl: user.avatarUrl,
       },
-      token: this.generateToken(user.id, user.email),
+      token: this.generateToken(user.id, user.email, user.name, user.avatarUrl),
     };
   }
 }

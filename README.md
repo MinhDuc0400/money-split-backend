@@ -48,36 +48,41 @@ NODE_ENV="development"
 FRONTEND_URL="http://localhost:5173"
 ```
 
-### 3. Set Up Database
+### 3. Set Up Database and Server
 
-#### Option A: Using Docker (Recommended)
+#### Option A: Using Docker (Recommended - Run Everything)
 
-If you have Docker installed, you can start a PostgreSQL instance with a single command:
-
-```bash
-docker-compose up -d
-```
-
-This will start a PostgreSQL database with the credentials matching the default `DATABASE_URL`.
-
-#### Option B: Manual PostgreSQL Setup
-
-1. Install PostgreSQL on your machine.
-2. Create a new database named `splitmoney`.
-3. Update the `DATABASE_URL` in your `.env` file with your credentials:
-   `postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public`
-
-#### Initialize the Database
-
-Once your PostgreSQL instance is running, run the following commands to set up the schema:
+If you have Docker installed, you can start both the PostgreSQL database and the NestJS server with a single command:
 
 ```bash
-# Generate Prisma Client
-npx prisma generate
-
-# Run database migrations to create tables
-npx prisma migrate dev --name init
+docker-compose up -d --build
 ```
+
+This will:
+1. Start a PostgreSQL database.
+2. Build the NestJS application image.
+3. Start the application container.
+4. The API will be available at `http://localhost:3000`.
+
+#### Option B: Manual Setup (Database only with Docker)
+
+If you only want to run the database in Docker and run the server locally (for development):
+
+1. Start the database:
+   ```bash
+   docker-compose up -d db
+   ```
+
+2. Run database migrations:
+   ```bash
+   npx prisma generate
+   npx prisma migrate dev
+   ```
+
+3. Start the application:
+   ```bash
+   npm run start:dev
+   ```
 
 #### (Optional) View Data
 
