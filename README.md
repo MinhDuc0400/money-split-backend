@@ -27,11 +27,11 @@ npm install
 
 ### 2. Configure Environment Variables
 
-Create a `.env` file in the backend directory:
+Create a `.env` file in the backend directory (you can copy `.env.example` if it exists, or use the values below):
 
 ```env
 # Database
-DATABASE_URL="postgresql://user:password@localhost:5432/splitmoney?schema=public"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/splitmoney?schema=public"
 
 # JWT Authentication
 JWT_SECRET="your-super-secret-jwt-key-change-this-in-production"
@@ -50,14 +50,40 @@ FRONTEND_URL="http://localhost:5173"
 
 ### 3. Set Up Database
 
+#### Option A: Using Docker (Recommended)
+
+If you have Docker installed, you can start a PostgreSQL instance with a single command:
+
+```bash
+docker-compose up -d
+```
+
+This will start a PostgreSQL database with the credentials matching the default `DATABASE_URL`.
+
+#### Option B: Manual PostgreSQL Setup
+
+1. Install PostgreSQL on your machine.
+2. Create a new database named `splitmoney`.
+3. Update the `DATABASE_URL` in your `.env` file with your credentials:
+   `postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public`
+
+#### Initialize the Database
+
+Once your PostgreSQL instance is running, run the following commands to set up the schema:
+
 ```bash
 # Generate Prisma Client
 npx prisma generate
 
-# Run database migrations
+# Run database migrations to create tables
 npx prisma migrate dev --name init
+```
 
-# (Optional) Open Prisma Studio to view/edit data
+#### (Optional) View Data
+
+You can use Prisma Studio to view and edit your data in a browser:
+
+```bash
 npx prisma studio
 ```
 
