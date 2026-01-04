@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
+import { JoinGroupDto } from './dto/join-group.dto';
 import { GroupRole } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -151,6 +153,58 @@ export class GroupsService {
       where: { id },
       data: {
         deletedAt: new Date(),
+      },
+    });
+  }
+
+  async join(userId: string, joinGroupDto: JoinGroupDto) {
+    const { inviteCode } = joinGroupDto;
+
+    const group = await this.prisma.group.findUnique({
+      where: {
+        inviteCode: inviteCode.toUpperCase(),
+        deletedAt: null,
+      },
+    });
+
+    if (!group) {
+      throw new NotFoundException(
+        `Group with invite code "${inviteCode}" not found`,
+      );
+    }
+
+    // Check if user is already a member
+    const existingMember = await this.prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: {
+          groupId: group.id,
+          userId,
+        },
+      },
+    });
+
+    if (existingMember) {
+      if (existingMember.deletedAt) {
+        // Re-activate member if they were soft-deleted
+        return this.prisma.groupMember.update({
+          where: { id: existingMember.id },
+          data: { deletedAt: null },
+        });
+      }
+      throw new ConflictException('You are already a member of this group');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    return this.prisma.groupMember.create({
+      data: {
+        groupId: group.id,
+        userId: userId,
+        name: user?.name || 'Unknown',
+        avatarUrl: user?.avatarUrl,
+        role: GroupRole.MEMBER,
       },
     });
   }

@@ -203,6 +203,7 @@ Authorization: Bearer <your-jwt-token>
 ### Groups
 
 - `POST /groups` - Create a new group (returns `inviteCode`)
+- `POST /groups/join` - Join a group by `inviteCode`
 - `GET /groups` - List user's groups
 - `GET /groups/:id` - Get group details (includes members)
 - `PATCH /groups/:id` - Update group name/currency

@@ -12,8 +12,14 @@ import {
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
+import { JoinGroupDto } from './dto/join-group.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import type { Request } from 'express';
 import '../common/interfaces/request-user.interface';
 
@@ -26,10 +32,23 @@ export class GroupsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new group' })
-  @ApiResponse({ status: 201, description: 'The group has been successfully created.' })
+  @ApiResponse({
+    status: 201,
+    description: 'The group has been successfully created.',
+  })
   create(@Req() req: Request, @Body() createGroupDto: CreateGroupDto) {
     const userId = req.user!.id;
     return this.groupsService.create(userId, createGroupDto);
+  }
+
+  @Post('join')
+  @ApiOperation({ summary: 'Join a group by invite code' })
+  @ApiResponse({ status: 201, description: 'Successfully joined the group.' })
+  @ApiResponse({ status: 404, description: 'Group not found.' })
+  @ApiResponse({ status: 409, description: 'Already a member.' })
+  join(@Req() req: Request, @Body() joinGroupDto: JoinGroupDto) {
+    const userId = req.user!.id;
+    return this.groupsService.join(userId, joinGroupDto);
   }
 
   @Get()
@@ -51,7 +70,10 @@ export class GroupsController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a group' })
-  @ApiResponse({ status: 200, description: 'The group has been successfully updated.' })
+  @ApiResponse({
+    status: 200,
+    description: 'The group has been successfully updated.',
+  })
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   update(
     @Req() req: Request,
@@ -64,8 +86,14 @@ export class GroupsController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a group' })
-  @ApiResponse({ status: 200, description: 'The group has been successfully deleted.' })
-  @ApiResponse({ status: 403, description: 'Only the owner can delete the group.' })
+  @ApiResponse({
+    status: 200,
+    description: 'The group has been successfully deleted.',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Only the owner can delete the group.',
+  })
   remove(@Req() req: Request, @Param('id') id: string) {
     const userId = req.user!.id;
     return this.groupsService.remove(id, userId);
