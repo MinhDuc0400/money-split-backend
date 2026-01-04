@@ -44,13 +44,14 @@ model User {
 /* -------------------- GROUP -------------------- */
 
 model Group {
-  id        String   @id @default(uuid())
-  name      String
-  currency  String   @default("USD")
-  createdBy String   @map("created_by")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  deletedAt DateTime?
+  id         String   @id @default(uuid())
+  name       String
+  inviteCode String   @unique @map("invite_code")
+  currency   String   @default("USD")
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  deletedAt  DateTime?
 
   // Relations
   creator  User          @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
@@ -58,6 +59,7 @@ model Group {
   expenses Expense[]
   settlements Settlement[]
 
+  @@index([inviteCode])
   @@map("groups")
 }
 

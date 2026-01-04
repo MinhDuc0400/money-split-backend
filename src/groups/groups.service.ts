@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { GroupRole } from '@prisma/client';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class GroupsService {
@@ -10,9 +15,19 @@ export class GroupsService {
 
   async create(userId: string, createGroupDto: CreateGroupDto) {
     return this.prisma.$transaction(async (tx) => {
+      const id = crypto.randomUUID();
+      const inviteCode = crypto
+        .createHash('sha256')
+        .update(id)
+        .digest('hex')
+        .substring(0, 8)
+        .toUpperCase();
+
       const group = await tx.group.create({
         data: {
           ...createGroupDto,
+          id,
+          inviteCode,
           createdBy: userId,
         },
       });
@@ -95,7 +110,7 @@ export class GroupsService {
 
   async update(id: string, userId: string, updateGroupDto: UpdateGroupDto) {
     // Check if user is a member (or maybe only OWNER can update?)
-    // For now, let's allow any member to update group info, 
+    // For now, let's allow any member to update group info,
     // or restrict to OWNER if preferred.
     const member = await this.prisma.groupMember.findUnique({
       where: {

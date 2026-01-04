@@ -113,7 +113,7 @@ The API will be available at `http://localhost:3000`
 
 ### Groups
 - Expense groups (e.g., "Trip 2024", "Roommates")
-- Fields: id, name, currency, createdBy, createdAt, updatedAt
+- Fields: id, name, inviteCode (8-char unique code), currency, createdBy, createdAt, updatedAt
 
 ### GroupMembers
 - Junction table linking users to groups
@@ -200,13 +200,13 @@ All routes below require authentication. Include the JWT token in the Authorizat
 Authorization: Bearer <your-jwt-token>
 ```
 
-### Groups (To Be Implemented)
+### Groups
 
-- `POST /groups` - Create a new group
+- `POST /groups` - Create a new group (returns `inviteCode`)
 - `GET /groups` - List user's groups
-- `GET /groups/:id` - Get group details
-- `PATCH /groups/:id` - Update group name
-- `DELETE /groups/:id` - Delete group
+- `GET /groups/:id` - Get group details (includes members)
+- `PATCH /groups/:id` - Update group name/currency
+- `DELETE /groups/:id` - Soft delete group (Owner only)
 
 ### Members (To Be Implemented)
 
@@ -311,14 +311,13 @@ backend/
 
 ## Next Steps
 
-1. Implement Groups module with CRUD operations
-2. Implement Members module with CRUD operations
-3. Implement Expenses module with CRUD operations
-4. Implement Settlements calculation endpoint
-5. Add comprehensive error handling
-6. Write unit and integration tests
-7. Set up CI/CD pipeline
-8. Deploy to production
+1. Implement Members module with CRUD operations
+2. Implement Expenses module with CRUD operations
+3. Implement Settlements calculation endpoint
+4. Add comprehensive error handling
+5. Write unit and integration tests
+6. Set up CI/CD pipeline
+7. Deploy to production
 
 ## License
 
