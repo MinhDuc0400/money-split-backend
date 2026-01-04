@@ -28,8 +28,9 @@ Last updated: 2026-01-03 23:15
 *   **User Model**: Stores user profiles, Google IDs, and authentication metadata.
 *   **Group Model**: Represents a shared space for expenses, supporting multiple currencies.
 *   **GroupMember Model**: Junction table managing user-to-group relationships, supporting both registered users and guest names.
-*   **Expense Model**: Tracks financial transactions with support for multiple split types (Even, Exact, Percent, Shares).
+*   **Expense Model**: Tracks financial transactions with support for multiple split types (Even, Exact, Percent, Shares) and rounding discrepancy management.
 *   **ExpenseSplit Model**: Details the exact breakdown of each expense per member.
+*   **Settlement Model**: Tracks payments between members to balance debts, supporting soft-deletes.
 
 #### ⚙️ Modular Design
 *   **Auth Module**: Encapsulates all authentication logic, strategies, and controllers.

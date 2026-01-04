@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,6 +5,22 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+/* -------------------- ENUMS -------------------- */
+
+enum GroupRole {
+  OWNER
+  MEMBER
+}
+
+enum SplitType {
+  EVEN
+  EXACT
+  PERCENTAGE
+  SHARES
+}
+
+/* -------------------- MODELS -------------------- */
 
 // User model for authentication
 model User {
@@ -19,6 +32,7 @@ model User {
   avatarUrl    String?  @map("avatar_url")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+  deletedAt    DateTime?
 
   // Relations
   createdGroups Group[]       @relation("GroupCreator")
@@ -27,7 +41,8 @@ model User {
   @@map("users")
 }
 
-// Group model
+/* -------------------- GROUP -------------------- */
+
 model Group {
   id        String   @id @default(uuid())
   name      String
@@ -35,67 +50,105 @@ model Group {
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime?
 
   // Relations
   creator  User          @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Cascade)
   members  GroupMember[]
   expenses Expense[]
+  settlements Settlement[]
 
   @@map("groups")
 }
 
-// GroupMember model (junction table with additional fields)
+/* -------------------- GROUP MEMBER -------------------- */
+
 model GroupMember {
   id        String   @id @default(uuid())
   groupId   String   @map("group_id")
-  userId    String?  @map("user_id") // Nullable for non-registered members
-  name      String // For non-registered members or display name
+  userId    String?  @map("user_id")
+  name      String
   avatarUrl String?  @map("avatar_url")
-  role      String   @default("member") // owner, member
+  role      GroupRole @default(MEMBER)
   joinedAt  DateTime @default(now()) @map("joined_at")
+  deletedAt DateTime?
 
   // Relations
   group            Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user             User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   paidExpenses     Expense[]       @relation("ExpensePayer")
   expenseSplits    ExpenseSplit[]
+  settlementsFrom  Settlement[]    @relation("SettlementFrom")
+  settlementsTo    Settlement[]    @relation("SettlementTo")
 
   @@unique([groupId, userId])
+  @@index([groupId])
   @@map("group_members")
 }
 
-// Expense model
+/* -------------------- EXPENSE -------------------- */
+
 model Expense {
   id          String   @id @default(uuid())
   groupId     String   @map("group_id")
   description String
-  amount      Decimal  @db.Decimal(10, 2)
+  amount      Decimal  @db.Decimal(18, 6)
+  roundingDiff Decimal  @default(0) @db.Decimal(18, 6) @map("rounding_diff") //
   payerId     String   @map("payer_id")
-  splitType   String   @map("split_type") // 'even', 'uneven', 'percentage', 'shares'
+  splitType   SplitType @map("split_type")
+  currency    String   @default("USD")
+  exchangeRate Decimal? @db.Decimal(18, 6) // to group currency
   date        DateTime @default(now())
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
+  deletedAt   DateTime?
 
   // Relations
   group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
   payer  GroupMember    @relation("ExpensePayer", fields: [payerId], references: [id], onDelete: Restrict)
   splits ExpenseSplit[]
 
+  @@index([groupId])
+  @@index([payerId])
   @@map("expenses")
 }
 
-// ExpenseSplit model
+/* -------------------- EXPENSE SPLIT -------------------- */
+
 model ExpenseSplit {
   id        String   @id @default(uuid())
   expenseId String   @map("expense_id")
   memberId  String   @map("member_id")
-  amount    Decimal  @db.Decimal(10, 2)
-  paid      Boolean  @default(false)
+  amount    Decimal  @db.Decimal(18, 6)
 
   // Relations
   expense Expense     @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   member  GroupMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
 
   @@unique([expenseId, memberId])
+  @@index([memberId])
   @@map("expense_splits")
+}
+
+/* -------------------- SETTLEMENTS -------------------- */
+
+model Settlement {
+  id        String   @id @default(uuid())
+  groupId   String   @map("group_id")
+  fromId    String   @map("from_id")
+  toId      String   @map("to_id")
+  amount    Decimal  @db.Decimal(18, 6)
+  currency  String   @default("USD")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  group Group @relation(fields: [groupId], references: [id])
+  from  GroupMember @relation("SettlementFrom", fields: [fromId], references: [id])
+  to    GroupMember @relation("SettlementTo", fields: [toId], references: [id])
+
+  @@index([groupId])
+  @@index([fromId])
+  @@index([toId])
+  @@map("settlements")
 }

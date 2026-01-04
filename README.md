@@ -76,7 +76,7 @@ If you only want to run the database in Docker and run the server locally (for d
 2. Run database migrations:
    ```bash
    npx prisma generate
-   npx prisma migrate dev
+   npx prisma migrate dev --name init
    ```
 
 3. Start the application:
@@ -127,6 +127,15 @@ The API will be available at `http://localhost:3000`
 ### ExpenseSplits
 - Breakdown of who owes what for each expense
 - Fields: id, expenseId, memberId, amount, paid
+
+### Updating the Schema (Without losing data)
+
+If you modify `prisma/schema.prisma`, **do not** use `migrate reset` unless you want to delete everything. Instead, run:
+
+```bash
+# This creates a new migration file and applies it to your existing database
+npx prisma migrate dev --name descriptive_change_name
+```
 
 ## API Endpoints
 
