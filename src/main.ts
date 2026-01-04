@@ -22,13 +22,13 @@ async function bootstrap() {
   );
 
   const config = new DocumentBuilder()
-    .setTitle('Cats example')
-    .setDescription('The cats API description')
+    .setTitle('SplitMoney API')
+    .setDescription('Backend API for SplitMoney expense splitting application')
     .setVersion('1.0')
-    .addTag('cats')
+    .addBearerAuth()
     .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, documentFactory);
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('docs', app, document);
 
 
   await app.listen(process.env.PORT ?? 3000);
