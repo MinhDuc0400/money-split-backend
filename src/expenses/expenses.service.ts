@@ -6,7 +6,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { SplitType } from '@prisma/client';
-import { SplitResult } from './interfaces/expense-calculation.interface';
 import {
   BalancesByCurrency,
   ExpenseResponse,
@@ -15,6 +14,7 @@ import {
   TransactionHistoryItem,
   UserBalanceResponse,
 } from './types/expense-responses.type';
+import { fromCents, toCents } from '../helpers/number.helper';
 
 @Injectable()
 export class ExpensesService {
@@ -65,21 +65,26 @@ export class ExpensesService {
       throw new ForbiddenException('You are not a member of this group');
     }
 
-    // 2. Validate payers total
+    // 2. Validate payers total using integer cents
+    const totalCents = toCents(dto.amount);
     const payersTotalCents = dto.payers.reduce(
-      (sum, p) => sum + Math.round(p.amount * 100),
+      (sum, p) => sum + toCents(p.amount),
       0,
     );
-    const totalCents = Math.round(dto.amount * 100);
 
     if (payersTotalCents !== totalCents) {
       throw new BadRequestException(
-        `Total payers amount (${payersTotalCents / 100}) must equal expense amount (${dto.amount})`,
+        `Total payers amount (${fromCents(payersTotalCents)}) must equal expense amount (${dto.amount})`,
       );
     }
 
-    // 3. Calculate splits
-    const splitData: SplitResult[] = [];
+    // 3. Calculate splits in integer cents
+    const splitData: {
+      memberId: string;
+      amountCents: number;
+      share?: number;
+      percentage?: number;
+    }[] = [];
 
     switch (dto.splitType) {
       case SplitType.EVEN: {
@@ -88,13 +93,14 @@ export class ExpensesService {
           throw new BadRequestException('At least one participant is required');
         }
 
-        const base = Math.floor(totalCents / participantIds.length);
-        const remainder = totalCents % participantIds.length;
-
+        const cents = this.allocateByWeights(
+          new Array(participantIds.length).fill(1),
+          totalCents,
+        );
         participantIds.forEach((memberId, i) => {
           splitData.push({
             memberId,
-            amount: (base + (i < remainder ? 1 : 0)) / 100,
+            amountCents: cents[i],
           });
         });
         break;
@@ -102,18 +108,18 @@ export class ExpensesService {
 
       case SplitType.EXACT: {
         const splitCentsSum = dto.splits.reduce(
-          (sum, s) => sum + Math.round((s.amount || 0) * 100),
+          (sum, s) => sum + toCents(s.amount || 0),
           0,
         );
         if (splitCentsSum !== totalCents) {
           throw new BadRequestException(
-            `Exact split amounts must sum to ${dto.amount}. Currently ${splitCentsSum / 100}`,
+            `Exact split amounts must sum to ${dto.amount}. Currently ${fromCents(splitCentsSum)}`,
           );
         }
         dto.splits.forEach((s) => {
           splitData.push({
             memberId: s.memberId,
-            amount: s.amount || 0,
+            amountCents: toCents(s.amount || 0),
           });
         });
         break;
@@ -123,6 +129,7 @@ export class ExpensesService {
         const percentages = dto.splits.map((s) => s.percentage || 0);
         const percentSum = percentages.reduce((a, b) => a + b, 0);
 
+        // We use Math.round(percentSum * 100) to check if it's 100% (with 2 decimal precision for percentages)
         if (Math.round(percentSum * 100) !== 10000) {
           throw new BadRequestException(
             `Percentages must sum to 100%. Currently ${percentSum}%`,
@@ -133,7 +140,7 @@ export class ExpensesService {
         dto.splits.forEach((s, i) => {
           splitData.push({
             memberId: s.memberId,
-            amount: cents[i] / 100,
+            amountCents: cents[i],
             percentage: s.percentage,
           });
         });
@@ -152,12 +159,21 @@ export class ExpensesService {
         dto.splits.forEach((s, i) => {
           splitData.push({
             memberId: s.memberId,
-            amount: cents[i] / 100,
+            amountCents: cents[i],
             share: s.share,
           });
         });
         break;
       }
+    }
+
+    // Invariant check
+    const totalSplitCents = splitData.reduce(
+      (sum, s) => sum + s.amountCents,
+      0,
+    );
+    if (totalSplitCents !== totalCents) {
+      throw new Error('Internal Invariant Violation: Split sum mismatch');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -187,7 +203,7 @@ export class ExpensesService {
         data: splitData.map((s) => ({
           expenseId: expense.id,
           memberId: s.memberId,
-          amount: s.amount,
+          amount: fromCents(s.amountCents),
           share: s.share,
           percentage: s.percentage,
         })),
@@ -375,44 +391,50 @@ export class ExpensesService {
       },
     });
 
-    const balancesByCurrency: BalancesByCurrency = {};
+    // Use a temporary structure to hold integer cents
+    const balancesByCurrencyCents: {
+      [currency: string]: { [memberId: string]: number };
+    } = {};
 
     // Process expenses
     expenses.forEach((expense) => {
       const currency = expense.currency;
-      if (!balancesByCurrency[currency]) {
-        balancesByCurrency[currency] = {};
-        members.forEach((m) => (balancesByCurrency[currency][m.id] = 0));
+      if (!balancesByCurrencyCents[currency]) {
+        balancesByCurrencyCents[currency] = {};
+        members.forEach((m) => (balancesByCurrencyCents[currency][m.id] = 0));
       }
 
-      const balances = balancesByCurrency[currency];
+      const balances = balancesByCurrencyCents[currency];
 
       expense.payers.forEach((payer) => {
-        balances[payer.memberId] += Number(payer.amount);
+        balances[payer.memberId] += toCents(Number(payer.amount));
       });
 
       expense.splits.forEach((split) => {
-        balances[split.memberId] -= Number(split.amount);
+        balances[split.memberId] -= toCents(Number(split.amount));
       });
     });
 
     // Process settlements (completed ones)
     settlements.forEach((s) => {
       const currency = s.currency;
-      if (!balancesByCurrency[currency]) {
-        balancesByCurrency[currency] = {};
-        members.forEach((m) => (balancesByCurrency[currency][m.id] = 0));
+      if (!balancesByCurrencyCents[currency]) {
+        balancesByCurrencyCents[currency] = {};
+        members.forEach((m) => (balancesByCurrencyCents[currency][m.id] = 0));
       }
-      const balances = balancesByCurrency[currency];
-      balances[s.fromId] += Number(s.amount);
-      balances[s.toId] -= Number(s.amount);
+      const balances = balancesByCurrencyCents[currency];
+      balances[s.fromId] += toCents(Number(s.amount));
+      balances[s.toId] -= toCents(Number(s.amount));
     });
 
-    // Rounding to 2 decimal places to avoid float issues
-    Object.keys(balancesByCurrency).forEach((currency) => {
-      Object.keys(balancesByCurrency[currency]).forEach((memberId) => {
-        balancesByCurrency[currency][memberId] =
-          Math.round(balancesByCurrency[currency][memberId] * 100) / 100;
+    // Convert back to decimal for output
+    const balancesByCurrency: BalancesByCurrency = {};
+    Object.keys(balancesByCurrencyCents).forEach((currency) => {
+      balancesByCurrency[currency] = {};
+      Object.keys(balancesByCurrencyCents[currency]).forEach((memberId) => {
+        balancesByCurrency[currency][memberId] = fromCents(
+          balancesByCurrencyCents[currency][memberId],
+        );
       });
     });
 
@@ -440,8 +462,8 @@ export class ExpensesService {
 
     Object.keys(balancesByCurrency).forEach((currency) => {
       const details: UserBalanceResponse['balances'][string]['details'] = [];
-      let totalOwed = 0;
-      let totalOwe = 0;
+      let totalOwedCents = 0;
+      let totalOweCents = 0;
 
       // Use the calculated settlements to figure out who owes who
       const currencySettlements = settlementsByCurrency.filter(
@@ -449,10 +471,11 @@ export class ExpensesService {
       );
 
       currencySettlements.forEach((s) => {
+        const amountCents = toCents(s.amount);
         if (s.from === currentUserMember.id) {
           // User owes s.to
           const targetMember = memberMap.get(s.to);
-          totalOwe += s.amount;
+          totalOweCents += amountCents;
           details.push({
             memberId: s.to,
             name: targetMember?.name || 'Unknown',
@@ -462,7 +485,7 @@ export class ExpensesService {
         } else if (s.to === currentUserMember.id) {
           // s.from owes user
           const targetMember = memberMap.get(s.from);
-          totalOwed += s.amount;
+          totalOwedCents += amountCents;
           details.push({
             memberId: s.from,
             name: targetMember?.name || 'Unknown',
@@ -473,8 +496,8 @@ export class ExpensesService {
       });
 
       response.balances[currency] = {
-        totalOwed: Math.round(totalOwed * 100) / 100,
-        totalOwe: Math.round(totalOwe * 100) / 100,
+        totalOwed: fromCents(totalOwedCents),
+        totalOwe: fromCents(totalOweCents),
         details,
       };
     });
@@ -490,21 +513,21 @@ export class ExpensesService {
     const allSettlements: RecommendedSettlement[] = [];
 
     Object.entries(balancesByCurrency).forEach(([currency, balances]) => {
-      const debtors: { id: string; amount: number }[] = [];
-      const creditors: { id: string; amount: number }[] = [];
+      const debtors: { id: string; amountCents: number }[] = [];
+      const creditors: { id: string; amountCents: number }[] = [];
 
       Object.entries(balances).forEach(([id, amount]) => {
-        const cents = Math.round(amount * 100);
-        if (cents < 0) debtors.push({ id, amount: cents });
-        if (cents > 0) creditors.push({ id, amount: cents });
+        const cents = toCents(amount);
+        if (cents < 0) debtors.push({ id, amountCents: cents });
+        if (cents > 0) creditors.push({ id, amountCents: cents });
       });
 
       // debtors have negative balance, meaning they owe money.
       // creditors have positive balance, meaning they are owed money.
-      // Math.abs(debtor.amount) is what they owe.
+      // Math.abs(debtor.amountCents) is what they owe.
 
-      debtors.sort((a, b) => a.amount - b.amount); // biggest debtors first (most negative)
-      creditors.sort((a, b) => b.amount - a.amount); // biggest creditors first
+      debtors.sort((a, b) => a.amountCents - b.amountCents); // biggest debtors first (most negative)
+      creditors.sort((a, b) => b.amountCents - a.amountCents); // biggest creditors first
 
       let i = 0;
       let j = 0;
@@ -512,22 +535,25 @@ export class ExpensesService {
       while (i < debtors.length && j < creditors.length) {
         const d = debtors[i];
         const c = creditors[j];
-        const amountCents = Math.min(Math.abs(d.amount), c.amount);
+        const settleAmountCents = Math.min(
+          Math.abs(d.amountCents),
+          c.amountCents,
+        );
 
-        if (amountCents > 0) {
+        if (settleAmountCents > 0) {
           allSettlements.push({
             from: d.id,
             to: c.id,
-            amount: amountCents / 100,
+            amount: fromCents(settleAmountCents),
             currency,
           });
         }
 
-        d.amount += amountCents;
-        c.amount -= amountCents;
+        d.amountCents += settleAmountCents;
+        c.amountCents -= settleAmountCents;
 
-        if (d.amount === 0) i++;
-        if (c.amount === 0) j++;
+        if (d.amountCents === 0) i++;
+        if (c.amountCents === 0) j++;
       }
     });
 
