@@ -1,5 +1,9 @@
 import { SettlementStatus } from '@prisma/client';
 
+/* =========================
+   BALANCES
+========================= */
+
 export interface BalanceMap {
   [memberId: string]: number;
 }
@@ -15,41 +19,51 @@ export interface RecommendedSettlement {
   currency: string;
 }
 
-export interface TransactionHistoryItem {
+/* =========================
+   SHARED TYPES
+========================= */
+
+export interface Participant {
+  memberId: string;
+  amount?: number; // amount only exists for EXPENSE participants
+  name?: string;
+  avatarUrl: string | null;
+}
+
+/* =========================
+   TRANSACTION HISTORY
+========================= */
+
+export interface ExpenseTransaction {
   id: string;
-  type: 'EXPENSE' | 'SETTLEMENT';
+  type: 'EXPENSE';
+  description: string;
+  amount: number;
+  currency: string;
+  date: Date;
+
+  payers: Participant[];
+  receivers: Participant[];
+}
+
+export interface SettlementTransaction {
+  id: string;
+  type: 'SETTLEMENT';
   description?: string;
   amount: number;
   currency: string;
   date: Date;
-  // For EXPENSE
-  payers?: {
-    memberId: string;
-    amount: number;
-    name?: string;
-    avatarUrl: string | null;
-  }[];
 
-  receivers?: {
-    memberId: string;
-    amount: number;
-    name?: string;
-    avatarUrl: string | null;
-  }[];
-
-  // For SETTLEMENT
-  from?: {
-    memberId: string;
-    name?: string;
-    avatarUrl: string | null;
-  };
-  to?: {
-    memberId: string;
-    name?: string;
-    avatarUrl: string | null;
-  };
-  status?: SettlementStatus;
+  from: Participant;
+  to: Participant;
+  status: SettlementStatus;
 }
+
+export type TransactionHistoryItem = ExpenseTransaction | SettlementTransaction;
+
+/* =========================
+   RESPONSES
+========================= */
 
 export interface ExpenseResponse {
   id: string;

@@ -26,7 +26,6 @@ export class ExpensesService {
       throw new BadRequestException('Total weight must be greater than 0');
     }
 
-
     const raw = weights.map((w) => {
       const exact = (totalCents * w) / totalWeight;
       return { base: Math.floor(exact), frac: exact - Math.floor(exact) };
