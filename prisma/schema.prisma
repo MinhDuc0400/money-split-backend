@@ -20,6 +20,12 @@ enum SplitType {
   SHARES
 }
 
+enum SettlementStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
 /* -------------------- MODELS -------------------- */
 
 // User model for authentication
@@ -78,7 +84,7 @@ model GroupMember {
   // Relations
   group            Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user             User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
-  paidExpenses     Expense[]       @relation("ExpensePayer")
+  paidExpenses     ExpensePayer[]
   expenseSplits    ExpenseSplit[]
   settlementsFrom  Settlement[]    @relation("SettlementFrom")
   settlementsTo    Settlement[]    @relation("SettlementTo")
@@ -91,37 +97,53 @@ model GroupMember {
 /* -------------------- EXPENSE -------------------- */
 
 model Expense {
-  id          String   @id @default(uuid())
-  groupId     String   @map("group_id")
-  description String
-  amount      Decimal  @db.Decimal(18, 6)
-  roundingDiff Decimal  @default(0) @db.Decimal(18, 6) @map("rounding_diff") //
-  payerId     String   @map("payer_id")
-  splitType   SplitType @map("split_type")
-  currency    String   @default("USD")
-  exchangeRate Decimal? @db.Decimal(18, 6) // to group currency
-  date        DateTime @default(now())
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  deletedAt   DateTime?
+  id           String   @id @default(uuid())
+  groupId      String   @map("group_id")
+  description  String
+  amount       Decimal  @db.Decimal(18, 6)
+  roundingDiff Decimal  @default(0) @db.Decimal(18, 6) @map("rounding_diff")
+  splitType    SplitType @map("split_type")
+  currency     String   @default("USD")
+  exchangeRate Decimal? @db.Decimal(18, 6) @map("exchange_rate") // to group currency
+  date         DateTime @default(now())
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
 
   // Relations
-  group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  payer  GroupMember    @relation("ExpensePayer", fields: [payerId], references: [id], onDelete: Restrict)
-  splits ExpenseSplit[]
+  group    Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payers   ExpensePayer[]
+  splits   ExpenseSplit[]
 
   @@index([groupId])
-  @@index([payerId])
   @@map("expenses")
+}
+
+/* -------------------- EXPENSE PAYER -------------------- */
+
+model ExpensePayer {
+  id        String  @id @default(uuid())
+  expenseId String  @map("expense_id")
+  memberId  String  @map("member_id")
+  amount    Decimal @db.Decimal(18, 6)
+
+  // Relations
+  expense Expense     @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  member  GroupMember @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([expenseId, memberId])
+  @@map("expense_payers")
 }
 
 /* -------------------- EXPENSE SPLIT -------------------- */
 
 model ExpenseSplit {
-  id        String   @id @default(uuid())
-  expenseId String   @map("expense_id")
-  memberId  String   @map("member_id")
-  amount    Decimal  @db.Decimal(18, 6)
+  id         String  @id @default(uuid())
+  expenseId  String  @map("expense_id")
+  memberId   String  @map("member_id")
+  amount     Decimal @db.Decimal(18, 6)
+  share      Decimal? @db.Decimal(18, 6) // For SHARES split type
+  percentage Decimal? @db.Decimal(18, 6) // For PERCENTAGE split type
 
   // Relations
   expense Expense     @relation(fields: [expenseId], references: [id], onDelete: Cascade)
@@ -141,8 +163,10 @@ model Settlement {
   toId      String   @map("to_id")
   amount    Decimal  @db.Decimal(18, 6)
   currency  String   @default("USD")
+  status    SettlementStatus @default(PENDING)
   note      String?
   createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   group Group @relation(fields: [groupId], references: [id])

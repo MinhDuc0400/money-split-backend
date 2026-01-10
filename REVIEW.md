@@ -2,7 +2,7 @@
 
 This document provides a comprehensive review of the backend architecture, features, and implementation details for the SplitMoney application.
 
-Last updated: 2026-01-03 23:15
+Last updated: 2026-01-09 22:55
 
 ---
 
@@ -28,9 +28,10 @@ Last updated: 2026-01-03 23:15
 *   **User Model**: Stores user profiles, Google IDs, and authentication metadata.
 *   **Group Model**: Represents a shared space for expenses, supporting multiple currencies.
 *   **GroupMember Model**: Junction table managing user-to-group relationships, supporting both registered users and guest names.
-*   **Expense Model**: Tracks financial transactions with support for multiple split types (Even, Exact, Percent, Shares) and rounding discrepancy management.
-*   **ExpenseSplit Model**: Details the exact breakdown of each expense per member.
-*   **Settlement Model**: Tracks payments between members to balance debts, supporting soft-deletes.
+*   **Expense Model**: Tracks financial transactions with support for multiple split types (Even, Exact, Percent, Shares) and rounding discrepancy management. Now supports multiple payers.
+*   **ExpensePayer Model**: Allows multiple members to pay for a single expense.
+*   **ExpenseSplit Model**: Details the exact breakdown of each expense per member, storing original shares/percentages.
+*   **Settlement Model**: Tracks payments between members to balance debts, with status management (Pending, Completed, Rejected).
 
 #### ⚙️ Modular Design
 *   **Auth Module**: Encapsulates all authentication logic, strategies, and controllers.
@@ -62,14 +63,29 @@ Last updated: 2026-01-03 23:15
 *   Modified `AuthService` to include `name` and `picture` in the JWT payload.
 *   Verified compatibility with the React frontend's `AuthCallback` and route guards.
 
-#### ✅ Database Schema Foundation
-*   Designed and implemented a robust relational schema in `schema.prisma` that supports complex expense splitting and multi-group management.
-*   Configured PostgreSQL as the primary data store.
+#### ✅ Database Schema Enhancements
+*   Refined the relational schema to support multiple payers per expense.
+*   Enhanced split tracking to preserve original split logic (shares, percentages).
+*   Introduced settlement status to track the lifecycle of debt repayments.
+*   Ensured consistent database mapping for all fields.
+
+#### ✅ Group Expenses & Transactions
+*   Implemented `ExpensesModule` for managing group finances.
+*   **Create Expense**: Supports multiple payers and various split types (Even, Exact, Percentage, Shares).
+*   **Transaction History**: Provides a unified, chronological feed of both expenses and debt settlements within a group.
+*   **Membership Security**: Ensured that only verified group members can record expenses or view history.
+
+#### ✅ Type Safety & Strong Typing
+*   **Explicit Return Types**: All Controller and Service methods now have explicit return types (`Promise<T>`), improving code readability and maintainability.
+*   **Dedicated Interfaces**: Created `expense-calculation.interface.ts` and `expense-responses.type.ts` to define the shape of complex internal logic and API responses.
+*   **Prisma Integration**: Leveraged Prisma-generated types across the `Groups` and `Expenses` modules.
+*   **Precise Data Mapping**: Explicitly mapping Prisma `Decimal` types to `number` in API responses to ensure consistency.
+*   **Detailed Payer Information**: Enhanced `TransactionHistoryItem` and `ExpenseResponse` to include comprehensive payer details (ID, name, and amount), ensuring clear visibility of who paid for each expense.
 
 ---
 
 ### 5. Future Roadmap
-1.  **RESTful APIs**: Complete the implementation of Group and Expense CRUD endpoints.
+1.  **RESTful APIs**: Complete the remaining CRUD operations for Expenses.
 2.  **WebSockets**: Real-time updates when expenses are added or edited by other group members.
 3.  **API Documentation**: Integrate Swagger (OpenAPI) for interactive API documentation.
 4.  **Unit & E2E Testing**: Add Jest tests for Auth and Business logic services.

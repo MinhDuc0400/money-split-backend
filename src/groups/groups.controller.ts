@@ -20,6 +20,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Group, GroupMember } from '@prisma/client';
 import type { Request } from 'express';
 import '../common/interfaces/request-user.interface';
 
@@ -36,7 +37,10 @@ export class GroupsController {
     status: 201,
     description: 'The group has been successfully created.',
   })
-  create(@Req() req: Request, @Body() createGroupDto: CreateGroupDto) {
+  create(
+    @Req() req: Request,
+    @Body() createGroupDto: CreateGroupDto,
+  ): Promise<Group> {
     const userId = req.user!.id;
     return this.groupsService.create(userId, createGroupDto);
   }
@@ -46,7 +50,10 @@ export class GroupsController {
   @ApiResponse({ status: 201, description: 'Successfully joined the group.' })
   @ApiResponse({ status: 404, description: 'Group not found.' })
   @ApiResponse({ status: 409, description: 'Already a member.' })
-  join(@Req() req: Request, @Body() joinGroupDto: JoinGroupDto) {
+  join(
+    @Req() req: Request,
+    @Body() joinGroupDto: JoinGroupDto,
+  ): Promise<GroupMember> {
     const userId = req.user!.id;
     return this.groupsService.join(userId, joinGroupDto);
   }
@@ -54,7 +61,7 @@ export class GroupsController {
   @Get()
   @ApiOperation({ summary: 'Get all groups for the authenticated user' })
   @ApiResponse({ status: 200, description: 'Return all groups.' })
-  findAll(@Req() req: Request) {
+  findAll(@Req() req: Request): Promise<Group[]> {
     const userId = req.user!.id;
     return this.groupsService.findAll(userId);
   }
@@ -63,7 +70,7 @@ export class GroupsController {
   @ApiOperation({ summary: 'Get a group by id' })
   @ApiResponse({ status: 200, description: 'Return the group.' })
   @ApiResponse({ status: 404, description: 'Group not found.' })
-  findOne(@Req() req: Request, @Param('id') id: string) {
+  findOne(@Req() req: Request, @Param('id') id: string): Promise<Group> {
     const userId = req.user!.id;
     return this.groupsService.findOne(id, userId);
   }
@@ -79,7 +86,7 @@ export class GroupsController {
     @Req() req: Request,
     @Param('id') id: string,
     @Body() updateGroupDto: UpdateGroupDto,
-  ) {
+  ): Promise<Group> {
     const userId = req.user!.id;
     return this.groupsService.update(id, userId, updateGroupDto);
   }
@@ -94,7 +101,7 @@ export class GroupsController {
     status: 403,
     description: 'Only the owner can delete the group.',
   })
-  remove(@Req() req: Request, @Param('id') id: string) {
+  remove(@Req() req: Request, @Param('id') id: string): Promise<Group> {
     const userId = req.user!.id;
     return this.groupsService.remove(id, userId);
   }

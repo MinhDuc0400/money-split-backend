@@ -8,14 +8,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
-import { GroupRole } from '@prisma/client';
+import { Group, GroupMember, GroupRole } from '@prisma/client';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class GroupsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(userId: string, createGroupDto: CreateGroupDto) {
+  async create(userId: string, createGroupDto: CreateGroupDto): Promise<Group> {
     return this.prisma.$transaction(async (tx) => {
       const id = crypto.randomUUID();
       const inviteCode = crypto
@@ -53,7 +53,7 @@ export class GroupsService {
     });
   }
 
-  async findAll(userId: string) {
+  async findAll(userId: string): Promise<Group[]> {
     return this.prisma.group.findMany({
       where: {
         members: {
@@ -77,7 +77,7 @@ export class GroupsService {
     });
   }
 
-  async findOne(id: string, userId: string) {
+  async findOne(id: string, userId: string): Promise<Group> {
     const group = await this.prisma.group.findFirst({
       where: {
         id,
@@ -95,6 +95,26 @@ export class GroupsService {
             deletedAt: null,
           },
         },
+        expenses: {
+          where: {
+            deletedAt: null,
+          },
+          include: {
+            payers: true,
+            splits: true,
+          },
+          orderBy: {
+            date: 'desc',
+          },
+        },
+        settlements: {
+          where: {
+            deletedAt: null,
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
         _count: {
           select: {
             expenses: true,
@@ -110,7 +130,11 @@ export class GroupsService {
     return group;
   }
 
-  async update(id: string, userId: string, updateGroupDto: UpdateGroupDto) {
+  async update(
+    id: string,
+    userId: string,
+    updateGroupDto: UpdateGroupDto,
+  ): Promise<Group> {
     // Check if user is a member (or maybe only OWNER can update?)
     // For now, let's allow any member to update group info,
     // or restrict to OWNER if preferred.
@@ -133,7 +157,7 @@ export class GroupsService {
     });
   }
 
-  async remove(id: string, userId: string) {
+  async remove(id: string, userId: string): Promise<Group> {
     // Only creator or OWNER can delete the group
     const member = await this.prisma.groupMember.findUnique({
       where: {
@@ -157,7 +181,7 @@ export class GroupsService {
     });
   }
 
-  async join(userId: string, joinGroupDto: JoinGroupDto) {
+  async join(userId: string, joinGroupDto: JoinGroupDto): Promise<GroupMember> {
     const { inviteCode } = joinGroupDto;
 
     const group = await this.prisma.group.findUnique({
