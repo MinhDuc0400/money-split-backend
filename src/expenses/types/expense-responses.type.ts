@@ -18,7 +18,7 @@ export interface RecommendedSettlement {
 export interface TransactionHistoryItem {
   id: string;
   type: 'EXPENSE' | 'SETTLEMENT';
-  description: string;
+  description?: string;
   amount: number;
   currency: string;
   date: Date;
@@ -27,10 +27,27 @@ export interface TransactionHistoryItem {
     memberId: string;
     amount: number;
     name?: string;
+    avatarUrl: string | null;
   }[];
+
+  receivers?: {
+    memberId: string;
+    amount: number;
+    name?: string;
+    avatarUrl: string | null;
+  }[];
+
   // For SETTLEMENT
-  fromId?: string;
-  toId?: string;
+  from?: {
+    memberId: string;
+    name?: string;
+    avatarUrl: string | null;
+  };
+  to?: {
+    memberId: string;
+    name?: string;
+    avatarUrl: string | null;
+  };
   status?: SettlementStatus;
 }
 

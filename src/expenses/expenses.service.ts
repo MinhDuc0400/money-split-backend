@@ -279,23 +279,37 @@ export class ExpensesService {
         amount: Number(e.amount),
         currency: e.currency,
         date: e.date,
-        payerId: e.payers[0]?.memberId, // Return first payer for simple display
         payers: e.payers.map((p) => ({
           memberId: p.memberId,
           amount: Number(p.amount),
           name: p.member.name,
+          avatarUrl: p.member.avatarUrl,
+        })),
+        receivers: e.splits.map((s) => ({
+          memberId: s.memberId,
+          amount: Number(s.amount),
+          name: s.member.name,
+          avatarUrl: s.member.avatarUrl,
         })),
       })),
       ...settlements.map((s) => ({
         id: s.id,
         type: 'SETTLEMENT' as const,
-        description: `Payment to ${s.to.name}`,
         amount: Number(s.amount),
         currency: s.currency,
         date: s.createdAt,
-        fromId: s.fromId,
-        toId: s.toId,
         status: s.status,
+
+        from: {
+          memberId: s.fromId,
+          name: s.from.name,
+          avatarUrl: s.from.avatarUrl,
+        },
+        to: {
+          memberId: s.toId,
+          name: s.to.name,
+          avatarUrl: s.to.avatarUrl,
+        },
       })),
     ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
