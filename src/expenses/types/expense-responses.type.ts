@@ -72,6 +72,21 @@ export interface ExpenseResponse {
   }[];
 }
 
+export interface UserBalanceResponse {
+  balances: {
+    [currency: string]: {
+      totalOwed: number; // how much he is owed
+      totalOwe: number; // how much he owes
+      details: {
+        memberId: string;
+        name: string;
+        avatarUrl: string | null;
+        amount: number; // positive: they owe user, negative: user owes them
+      }[];
+    };
+  };
+}
+
 export interface GroupedTransactionHistory {
   [monthYear: string]: TransactionHistoryItem[];
 }

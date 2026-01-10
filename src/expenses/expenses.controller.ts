@@ -21,6 +21,7 @@ import {
   ExpenseResponse,
   GroupedTransactionHistory,
   RecommendedSettlement,
+  UserBalanceResponse,
 } from './types/expense-responses.type';
 import type { Request } from 'express';
 import '../common/interfaces/request-user.interface';
@@ -65,6 +66,17 @@ export class ExpensesController {
   ): Promise<BalancesByCurrency> {
     const userId = req.user!.id;
     return this.expensesService.getBalances(groupId, userId);
+  }
+
+  @Get('balances/me')
+  @ApiOperation({ summary: 'Get specific balance of the calling user' })
+  @ApiResponse({ status: 200, description: 'Return user balance.' })
+  getMyBalance(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+  ): Promise<UserBalanceResponse> {
+    const userId = req.user!.id;
+    return this.expensesService.getUserBalance(groupId, userId);
   }
 
   @Get('settlements')

@@ -13,6 +13,7 @@ import {
   GroupedTransactionHistory,
   RecommendedSettlement,
   TransactionHistoryItem,
+  UserBalanceResponse,
 } from './types/expense-responses.type';
 
 @Injectable()
@@ -21,7 +22,10 @@ export class ExpensesService {
 
   private allocateByWeights(weights: number[], totalCents: number): number[] {
     const totalWeight = weights.reduce((a, b) => a + b, 0);
-    if (totalWeight === 0) return weights.map(() => 0);
+    if (totalWeight === 0) {
+      throw new BadRequestException('Total weight must be greater than 0');
+    }
+
 
     const raw = weights.map((w) => {
       const exact = (totalCents * w) / totalWeight;
@@ -81,6 +85,10 @@ export class ExpensesService {
     switch (dto.splitType) {
       case SplitType.EVEN: {
         const participantIds = dto.splits.map((s) => s.memberId);
+        if (participantIds.length === 0) {
+          throw new BadRequestException('At least one participant is required');
+        }
+
         const base = Math.floor(totalCents / participantIds.length);
         const remainder = totalCents % participantIds.length;
 
@@ -410,6 +418,69 @@ export class ExpensesService {
     });
 
     return balancesByCurrency;
+  }
+
+  async getUserBalance(
+    groupId: string,
+    userId: string,
+  ): Promise<UserBalanceResponse> {
+    const balancesByCurrency = await this.getBalances(groupId, userId);
+    const settlementsByCurrency = await this.getSettlements(groupId, userId);
+
+    const members = await this.prisma.groupMember.findMany({
+      where: { groupId, deletedAt: null },
+    });
+    const memberMap = new Map(members.map((m) => [m.id, m]));
+    const currentUserMember = members.find((m) => m.userId === userId);
+
+    if (!currentUserMember) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const response: UserBalanceResponse = { balances: {} };
+
+    Object.keys(balancesByCurrency).forEach((currency) => {
+      const details: UserBalanceResponse['balances'][string]['details'] = [];
+      let totalOwed = 0;
+      let totalOwe = 0;
+
+      // Use the calculated settlements to figure out who owes who
+      const currencySettlements = settlementsByCurrency.filter(
+        (s) => s.currency === currency,
+      );
+
+      currencySettlements.forEach((s) => {
+        if (s.from === currentUserMember.id) {
+          // User owes s.to
+          const targetMember = memberMap.get(s.to);
+          totalOwe += s.amount;
+          details.push({
+            memberId: s.to,
+            name: targetMember?.name || 'Unknown',
+            avatarUrl: targetMember?.avatarUrl || null,
+            amount: -s.amount,
+          });
+        } else if (s.to === currentUserMember.id) {
+          // s.from owes user
+          const targetMember = memberMap.get(s.from);
+          totalOwed += s.amount;
+          details.push({
+            memberId: s.from,
+            name: targetMember?.name || 'Unknown',
+            avatarUrl: targetMember?.avatarUrl || null,
+            amount: s.amount,
+          });
+        }
+      });
+
+      response.balances[currency] = {
+        totalOwed: Math.round(totalOwed * 100) / 100,
+        totalOwe: Math.round(totalOwe * 100) / 100,
+        details,
+      };
+    });
+
+    return response;
   }
 
   async getSettlements(
