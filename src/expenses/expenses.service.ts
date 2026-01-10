@@ -429,12 +429,19 @@ export class ExpensesService {
 
     // Convert back to decimal for output
     const balancesByCurrency: BalancesByCurrency = {};
+    const memberMap = new Map(members.map((m) => [m.id, m]));
+
     Object.keys(balancesByCurrencyCents).forEach((currency) => {
-      balancesByCurrency[currency] = {};
-      Object.keys(balancesByCurrencyCents[currency]).forEach((memberId) => {
-        balancesByCurrency[currency][memberId] = fromCents(
-          balancesByCurrencyCents[currency][memberId],
-        );
+      balancesByCurrency[currency] = Object.keys(
+        balancesByCurrencyCents[currency],
+      ).map((memberId) => {
+        const m = memberMap.get(memberId)!;
+        return {
+          memberId,
+          name: m.name,
+          avatarUrl: m.avatarUrl,
+          balance: fromCents(balancesByCurrencyCents[currency][memberId]),
+        };
       });
     });
 
@@ -451,7 +458,6 @@ export class ExpensesService {
     const members = await this.prisma.groupMember.findMany({
       where: { groupId, deletedAt: null },
     });
-    const memberMap = new Map(members.map((m) => [m.id, m]));
     const currentUserMember = members.find((m) => m.userId === userId);
 
     if (!currentUserMember) {
@@ -472,24 +478,22 @@ export class ExpensesService {
 
       currencySettlements.forEach((s) => {
         const amountCents = toCents(s.amount);
-        if (s.from === currentUserMember.id) {
+        if (s.from.memberId === currentUserMember.id) {
           // User owes s.to
-          const targetMember = memberMap.get(s.to);
           totalOweCents += amountCents;
           details.push({
-            memberId: s.to,
-            name: targetMember?.name || 'Unknown',
-            avatarUrl: targetMember?.avatarUrl || null,
+            memberId: s.to.memberId,
+            name: s.to.name || 'Unknown',
+            avatarUrl: s.to.avatarUrl || null,
             amount: -s.amount,
           });
-        } else if (s.to === currentUserMember.id) {
+        } else if (s.to.memberId === currentUserMember.id) {
           // s.from owes user
-          const targetMember = memberMap.get(s.from);
           totalOwedCents += amountCents;
           details.push({
-            memberId: s.from,
-            name: targetMember?.name || 'Unknown',
-            avatarUrl: targetMember?.avatarUrl || null,
+            memberId: s.from.memberId,
+            name: s.from.name || 'Unknown',
+            avatarUrl: s.from.avatarUrl || null,
             amount: s.amount,
           });
         }
@@ -513,13 +517,35 @@ export class ExpensesService {
     const allSettlements: RecommendedSettlement[] = [];
 
     Object.entries(balancesByCurrency).forEach(([currency, balances]) => {
-      const debtors: { id: string; amountCents: number }[] = [];
-      const creditors: { id: string; amountCents: number }[] = [];
+      const debtors: {
+        id: string;
+        name: string;
+        avatarUrl: string | null;
+        amountCents: number;
+      }[] = [];
+      const creditors: {
+        id: string;
+        name: string;
+        avatarUrl: string | null;
+        amountCents: number;
+      }[] = [];
 
-      Object.entries(balances).forEach(([id, amount]) => {
-        const cents = toCents(amount);
-        if (cents < 0) debtors.push({ id, amountCents: cents });
-        if (cents > 0) creditors.push({ id, amountCents: cents });
+      balances.forEach((b) => {
+        const cents = toCents(b.balance);
+        if (cents < 0)
+          debtors.push({
+            id: b.memberId,
+            name: b.name,
+            avatarUrl: b.avatarUrl,
+            amountCents: cents,
+          });
+        if (cents > 0)
+          creditors.push({
+            id: b.memberId,
+            name: b.name,
+            avatarUrl: b.avatarUrl,
+            amountCents: cents,
+          });
       });
 
       // debtors have negative balance, meaning they owe money.
@@ -542,8 +568,16 @@ export class ExpensesService {
 
         if (settleAmountCents > 0) {
           allSettlements.push({
-            from: d.id,
-            to: c.id,
+            from: {
+              memberId: d.id,
+              name: d.name,
+              avatarUrl: d.avatarUrl,
+            },
+            to: {
+              memberId: c.id,
+              name: c.name,
+              avatarUrl: c.avatarUrl,
+            },
             amount: fromCents(settleAmountCents),
             currency,
           });

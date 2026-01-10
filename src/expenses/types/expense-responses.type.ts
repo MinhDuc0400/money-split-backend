@@ -4,17 +4,20 @@ import { SettlementStatus } from '@prisma/client';
    BALANCES
 ========================= */
 
-export interface BalanceMap {
-  [memberId: string]: number;
+export interface BalanceInfo {
+  memberId: string;
+  name: string;
+  avatarUrl: string | null;
+  balance: number;
 }
 
 export interface BalancesByCurrency {
-  [currency: string]: BalanceMap;
+  [currency: string]: BalanceInfo[];
 }
 
 export interface RecommendedSettlement {
-  from: string;
-  to: string;
+  from: Participant;
+  to: Participant;
   amount: number;
   currency: string;
 }
