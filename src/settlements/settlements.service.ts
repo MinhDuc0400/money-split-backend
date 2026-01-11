@@ -12,6 +12,7 @@ import {
 } from './types/settle-up-responses.type';
 import { Prisma, SettlementStatus } from '@prisma/client';
 import { toCents, fromCents } from '../helpers/number.helper';
+import { calculateMinimalTransfers } from './settlement.algo';
 
 @Injectable()
 export class SettlementsService {
@@ -270,7 +271,7 @@ export class SettlementsService {
     const { currency } = dto;
 
     return this.prisma.$transaction(async (tx) => {
-      // 2. Fetch all non-zero balances for the group (filtered by currency if provided)
+      // 2. Fetch all non-zero balances
       const balances = await tx.memberBalance.findMany({
         where: {
           groupId,
@@ -286,88 +287,37 @@ export class SettlementsService {
         return { settlements: [] };
       }
 
-      // 3. Group by currency and compute transfers
-      const createdSettlements: any[] = [];
+      const createdSettlements: SettlementResponse[] = [];
       const currencies = [...new Set(balances.map((b) => b.currency))];
 
       for (const curr of currencies) {
         const currBalances = balances.filter((b) => b.currency === curr);
 
-        const debtors: {
-          id: string;
-          name: string;
-          avatarUrl: string | null;
-          amountCents: number;
-        }[] = [];
-        const creditors: {
-          id: string;
-          name: string;
-          avatarUrl: string | null;
-          amountCents: number;
-        }[] = [];
+        // 3. Build BalanceInput (CENTS, immutable)
+        const balanceInputs = currBalances.map((b) => ({
+          memberId: b.memberId,
+          amountCents: toCents(Number(b.balance)),
+        }));
 
-        let sumCents = 0;
-        for (const b of currBalances) {
-          const cents = toCents(Number(b.balance));
-          sumCents += cents;
-          if (cents < 0) {
-            debtors.push({
-              id: b.memberId,
-              name: b.member.name,
-              avatarUrl: b.member.avatarUrl,
-              amountCents: cents,
-            });
-          } else if (cents > 0) {
-            creditors.push({
-              id: b.memberId,
-              name: b.member.name,
-              avatarUrl: b.member.avatarUrl,
-              amountCents: cents,
-            });
-          }
-        }
+        // 4. Calculate minimal transfers (PURE function)
+        const transfers = calculateMinimalTransfers(balanceInputs);
 
-        // Validate net balances sum to zero
-        if (sumCents !== 0) {
-          throw new BadRequestException(
-            `Balances for ${curr} do not sum to zero (diff: ${fromCents(sumCents)})`,
+        // 5. Apply each transfer via internal settlement logic
+        for (const t of transfers) {
+          const settlement = await this.applySettlementInternal(
+            tx,
+            groupId,
+            t.fromId,
+            t.toId,
+            fromCents(t.amountCents),
+            curr,
+            'Automatic Settle Up',
+          );
+
+          createdSettlements.push(
+            this.mapSettlementResponse(settlement),
           );
         }
-
-        // 4. Compute minimal transfers (greedy algorithm)
-        debtors.sort((a, b) => a.amountCents - b.amountCents); // Most negative first
-        creditors.sort((a, b) => b.amountCents - a.amountCents); // Most positive first
-
-        let i = 0,
-          j = 0;
-        while (i < debtors.length && j < creditors.length) {
-          const d = debtors[i];
-          const c = creditors[j];
-          const amountCents = Math.min(Math.abs(d.amountCents), c.amountCents);
-
-          if (amountCents > 0) {
-            const settlement = await this.applySettlementInternal(
-              tx,
-              groupId,
-              d.id,
-              c.id,
-              fromCents(amountCents),
-              curr,
-              'Automatic Settle Up',
-            );
-
-            createdSettlements.push(this.mapSettlementResponse(settlement));
-          }
-
-          d.amountCents += amountCents;
-          c.amountCents -= amountCents;
-
-          if (d.amountCents === 0) i++;
-          if (c.amountCents === 0) j++;
-        }
-
-        // NO MORE blind zeroing of balances or deletion of debts.
-        // applySettlementInternal handles it incrementally.
       }
 
       return { settlements: createdSettlements };
