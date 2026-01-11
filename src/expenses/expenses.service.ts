@@ -275,47 +275,80 @@ export class ExpensesService {
       // 8. Update Debts (Net debt change between payers and splitters)
       // For each payer and each splitter, calculate the amount the splitter owes to this payer for this specific expense.
       // Amount owed = (Payer's contribution / Total amount) * Splitter's share
-      for (const p of dto.payers) {
-        const payerCents = toCents(p.amount);
-        if (payerCents === 0) continue;
+      const payerWeights = dto.payers.map((p) => toCents(p.amount));
 
-        for (const s of splitData) {
-          if (p.memberId === s.memberId) continue; // Payer doesn't owe themselves to the Debt table
+      for (const s of splitData) {
+        const allocatedCents = this.allocateByWeights(
+          payerWeights,
+          s.amountCents,
+        );
 
-          // How much of this splitter's share was paid by this specific payer?
-          // (payerAmount / totalAmount) * splitterAmount
-          const amountOwedCents = Math.round(
-            (payerCents * s.amountCents) / totalCents,
-          );
-          if (amountOwedCents === 0) continue;
+        for (let i = 0; i < dto.payers.length; i++) {
+          const p = dto.payers[i];
+          const amountOwedCents = allocatedCents[i];
 
-          const amountOwed = fromCents(amountOwedCents);
+          if (amountOwedCents === 0 || p.memberId === s.memberId) continue;
 
-          // Update debt: splitter owes payer
-          // We always store Debt as "debtorId owes creditorId amount"
-          // If we already have a record where payer owes splitter, we should ideally net it out.
-          // But the Debt model is directional: [groupId, debtorId, creditorId, currency
-
-          await tx.debt.upsert({
+          // Enforce canonical net debt direction
+          // 1. Check if the reverse debt (p owes s) exists
+          const reverseDebt = await tx.debt.findUnique({
             where: {
               groupId_debtorId_creditorId_currency: {
+                groupId,
+                debtorId: p.memberId,
+                creditorId: s.memberId,
+                currency,
+              },
+            },
+          });
+
+          let remainingNewDebtCents = amountOwedCents;
+
+          if (reverseDebt) {
+            const reverseDebtCents = toCents(Number(reverseDebt.amount));
+            if (reverseDebtCents >= remainingNewDebtCents) {
+              // Existing reverse debt covers the new debt entirely
+              const updatedReverseCents =
+                reverseDebtCents - remainingNewDebtCents;
+              if (updatedReverseCents === 0) {
+                await tx.debt.delete({ where: { id: reverseDebt.id } });
+              } else {
+                await tx.debt.update({
+                  where: { id: reverseDebt.id },
+                  data: { amount: fromCents(updatedReverseCents) },
+                });
+              }
+              remainingNewDebtCents = 0;
+            } else {
+              // New debt is larger than reverse debt, clear reverse and continue with remainder
+              await tx.debt.delete({ where: { id: reverseDebt.id } });
+              remainingNewDebtCents -= reverseDebtCents;
+            }
+          }
+
+          if (remainingNewDebtCents > 0) {
+            const amountOwed = fromCents(remainingNewDebtCents);
+            await tx.debt.upsert({
+              where: {
+                groupId_debtorId_creditorId_currency: {
+                  groupId,
+                  debtorId: s.memberId,
+                  creditorId: p.memberId,
+                  currency,
+                },
+              },
+              create: {
                 groupId,
                 debtorId: s.memberId,
                 creditorId: p.memberId,
                 currency,
+                amount: amountOwed,
               },
-            },
-            create: {
-              groupId,
-              debtorId: s.memberId,
-              creditorId: p.memberId,
-              currency,
-              amount: amountOwed,
-            },
-            update: {
-              amount: { increment: amountOwed },
-            },
-          });
+              update: {
+                amount: { increment: amountOwed },
+              },
+            });
+          }
         }
       }
 
