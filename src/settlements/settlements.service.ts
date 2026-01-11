@@ -15,7 +15,7 @@ import { toCents, fromCents } from '../helpers/number.helper';
 
 @Injectable()
 export class SettlementsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async createSettlement(
     groupId: string,
@@ -60,90 +60,119 @@ export class SettlementsService {
         throw new BadRequestException('Receiver is not a member of this group');
       }
 
-      // 3. Create the Settlement record
-      const settlement = await tx.settlement.create({
-        data: {
-          groupId,
-          fromId,
-          toId,
-          amount,
-          currency,
-          status: SettlementStatus.COMPLETED,
-          note,
-        },
-        include: {
-          from: true,
-          to: true,
-        },
-      });
-
-      // 4. Update MemberBalances
-      // Payer (fromId): balance increases (less negative or more positive)
-      await tx.memberBalance.upsert({
-        where: {
-          groupId_memberId_currency: {
-            groupId,
-            memberId: fromId,
-            currency,
-          },
-        },
-        create: {
-          groupId,
-          memberId: fromId,
-          currency,
-          balance: amount,
-        },
-        update: { balance: { increment: amount } },
-      });
-
-      // Receiver (toId): balance decreases (less positive or more negative)
-      await tx.memberBalance.upsert({
-        where: {
-          groupId_memberId_currency: {
-            groupId,
-            memberId: toId,
-            currency,
-          },
-        },
-        create: {
-          groupId,
-          memberId: toId,
-          currency,
-          balance: -amount,
-        },
-        update: { balance: { decrement: amount } },
-      });
-
-      // 5. Update Debt records (Reverse/Reduce debt)
-      // If fromId pays toId, we reduce the debt fromId owes to toId.
-      await this.updateDebtAtomic(
+      // 3. Apply the settlement using internal logic
+      const settlement = await this.applySettlementInternal(
         tx,
         groupId,
         fromId,
         toId,
+        amount,
         currency,
-        toCents(amount),
+        note,
       );
 
-      return {
-        id: settlement.id,
-        from: {
-          memberId: settlement.fromId,
-          name: settlement.from.name,
-          avatarUrl: settlement.from.avatarUrl,
-        },
-        to: {
-          memberId: settlement.toId,
-          name: settlement.to.name,
-          avatarUrl: settlement.to.avatarUrl,
-        },
-        amount: Number(settlement.amount),
-        currency: settlement.currency,
-        status: settlement.status,
-        note: settlement.note,
-        createdAt: settlement.createdAt,
-      };
+      return this.mapSettlementResponse(settlement);
     });
+  }
+
+  private async applySettlementInternal(
+    tx: Prisma.TransactionClient,
+    groupId: string,
+    fromId: string,
+    toId: string,
+    amount: number,
+    currency: string,
+    note?: string,
+  ) {
+    // 1. Create the Settlement record
+    const settlement = await tx.settlement.create({
+      data: {
+        groupId,
+        fromId,
+        toId,
+        amount,
+        currency,
+        status: SettlementStatus.COMPLETED,
+        note: note || 'Settlement',
+      },
+      include: {
+        from: true,
+        to: true,
+      },
+    });
+
+    // 2. Update MemberBalances
+    // Payer (fromId): balance increases (less negative or more positive)
+    await tx.memberBalance.upsert({
+      where: {
+        groupId_memberId_currency: {
+          groupId,
+          memberId: fromId,
+          currency,
+        },
+      },
+      create: {
+        groupId,
+        memberId: fromId,
+        currency,
+        balance: amount,
+      },
+      update: { balance: { increment: amount } },
+    });
+
+    // Receiver (toId): balance decreases (less positive or more negative)
+    await tx.memberBalance.upsert({
+      where: {
+        groupId_memberId_currency: {
+          groupId,
+          memberId: toId,
+          currency,
+        },
+      },
+      create: {
+        groupId,
+        memberId: toId,
+        currency,
+        balance: -amount,
+      },
+      update: { balance: { decrement: amount } },
+    });
+
+    // 3. Update Debt records (Reverse/Reduce debt)
+    // If fromId pays toId, we reduce the debt fromId owes to toId.
+    await this.updateDebtAtomic(
+      tx,
+      groupId,
+      fromId,
+      toId,
+      currency,
+      toCents(amount),
+    );
+
+    return settlement;
+  }
+
+  private mapSettlementResponse(settlement: Prisma.SettlementGetPayload<{
+    include: { from: true; to: true }
+  }>): SettlementResponse {
+    return {
+      id: settlement.id,
+      from: {
+        memberId: settlement.fromId,
+        name: settlement.from.name,
+        avatarUrl: settlement.from.avatarUrl,
+      },
+      to: {
+        memberId: settlement.toId,
+        name: settlement.to.name,
+        avatarUrl: settlement.to.avatarUrl,
+      },
+      amount: Number(settlement.amount),
+      currency: settlement.currency,
+      status: settlement.status,
+      note: settlement.note,
+      createdAt: settlement.createdAt,
+    };
   }
 
   private async updateDebtAtomic(
@@ -317,39 +346,17 @@ export class SettlementsService {
           const amountCents = Math.min(Math.abs(d.amountCents), c.amountCents);
 
           if (amountCents > 0) {
-            const settlement = await tx.settlement.create({
-              data: {
-                groupId,
-                fromId: d.id,
-                toId: c.id,
-                amount: fromCents(amountCents),
-                currency: curr,
-                status: SettlementStatus.COMPLETED,
-                note: 'Automatic Settle Up',
-              },
-              include: {
-                from: true,
-                to: true,
-              },
-            });
+            const settlement = await this.applySettlementInternal(
+              tx,
+              groupId,
+              d.id,
+              c.id,
+              fromCents(amountCents),
+              curr,
+              'Automatic Settle Up',
+            );
 
-            createdSettlements.push({
-              id: settlement.id,
-              from: {
-                memberId: settlement.fromId,
-                name: settlement.from.name,
-                avatarUrl: settlement.from.avatarUrl,
-              },
-              to: {
-                memberId: settlement.toId,
-                name: settlement.to.name,
-                avatarUrl: settlement.to.avatarUrl,
-              },
-              amount: Number(settlement.amount),
-              currency: settlement.currency,
-              status: settlement.status,
-              createdAt: settlement.createdAt,
-            });
+            createdSettlements.push(this.mapSettlementResponse(settlement));
           }
 
           d.amountCents += amountCents;
@@ -359,24 +366,8 @@ export class SettlementsService {
           if (c.amountCents === 0) j++;
         }
 
-        // 5. Zero out MemberBalances for this currency
-        await tx.memberBalance.updateMany({
-          where: {
-            groupId,
-            currency: curr,
-          },
-          data: {
-            balance: 0,
-          },
-        });
-
-        // 6. Delete all Debt records for this currency as they are settled
-        await tx.debt.deleteMany({
-          where: {
-            groupId,
-            currency: curr,
-          },
-        });
+        // NO MORE blind zeroing of balances or deletion of debts.
+        // applySettlementInternal handles it incrementally.
       }
 
       return { settlements: createdSettlements };
