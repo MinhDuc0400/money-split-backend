@@ -87,6 +87,13 @@ Last updated: 2026-01-11 14:30
 *   **Delete Expense**: Implemented soft-delete for expenses, which also triggers a full reversal of its financial impact on member balances and group debts.
 *   **Integer Cent Math**: All financial calculations are performed using integer cents to prevent floating-point rounding errors and ensure exact balancing.
 
+#### ✅ Settle Up (Debt Settlement)
+*   **Individual Settlements**: Added `POST /groups/:groupId/settlements` to record payments between two specific group members. This automatically updates their balances and reduces/reverses any existing debt between them.
+*   **Minimal Settlement Transfers**: Implemented a `SettlementsService` that computes the most efficient way to balance all group debts using a greedy algorithm.
+*   **Automated Balancing**: The `POST /groups/:groupId/settle-up` endpoint automatically creates `COMPLETED` settlement records, zeros out all `MemberBalance` records, and clears all outstanding `Debt` records within a single atomic transaction.
+*   **Multi-Currency Support**: Safely handles settlements across different currencies, ensuring that each currency balances independently.
+*   **Data Consistency**: Validates that all group balances sum to exactly zero before performing any settlement operations to guard against data corruption or rounding discrepancies.
+
 ---
 
 ### 5. Future Roadmap
