@@ -2,6 +2,8 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -9,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
+import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   ApiTags,
@@ -44,6 +47,40 @@ export class ExpensesController {
   ): Promise<ExpenseResponse> {
     const userId = req.user!.id;
     return this.expensesService.create(groupId, userId, createExpenseDto);
+  }
+
+  @Patch('expenses/:expenseId')
+  @ApiOperation({ summary: 'Update an existing expense' })
+  @ApiResponse({ status: 200, description: 'Expense updated successfully.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Expense not found.' })
+  update(
+    @Param('groupId') groupId: string,
+    @Param('expenseId') expenseId: string,
+    @Req() req: Request,
+    @Body() updateExpenseDto: UpdateExpenseDto,
+  ): Promise<ExpenseResponse> {
+    const userId = req.user!.id;
+    return this.expensesService.updateExpense(
+      groupId,
+      expenseId,
+      userId,
+      updateExpenseDto,
+    );
+  }
+
+  @Delete('expenses/:expenseId')
+  @ApiOperation({ summary: 'Delete an expense' })
+  @ApiResponse({ status: 204, description: 'Expense deleted successfully.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Expense not found.' })
+  async remove(
+    @Param('groupId') groupId: string,
+    @Param('expenseId') expenseId: string,
+    @Req() req: Request,
+  ): Promise<void> {
+    const userId = req.user!.id;
+    await this.expensesService.deleteExpense(groupId, expenseId, userId);
   }
 
   @Get('transactions')

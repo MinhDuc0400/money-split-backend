@@ -2,10 +2,12 @@ import {
   Injectable,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
-import { SplitType } from '@prisma/client';
+import { UpdateExpenseDto } from './dto/update-expense.dto';
+import { Prisma, SplitType } from '@prisma/client';
 import {
   BalancesByCurrency,
   ExpenseResponse,
@@ -15,6 +17,7 @@ import {
   UserBalanceResponse,
 } from './types/expense-responses.type';
 import { fromCents, toCents } from '../helpers/number.helper';
+import { DebtFlow, ExpenseWithRelations } from './types/expense-internal.types';
 
 @Injectable()
 export class ExpensesService {
@@ -44,6 +47,35 @@ export class ExpensesService {
     }
 
     return cents;
+  }
+
+  private calculateDebtFlows(
+    payers: { memberId: string; amount: number }[],
+    splits: { memberId: string; amountCents: number }[],
+  ): DebtFlow[] {
+    const flows: DebtFlow[] = [];
+    const payerWeights = payers.map((p) => toCents(p.amount));
+
+    for (const s of splits) {
+      const allocatedCents = this.allocateByWeights(
+        payerWeights,
+        s.amountCents,
+      );
+
+      for (let i = 0; i < payers.length; i++) {
+        const p = payers[i];
+        const amountOwedCents = allocatedCents[i];
+
+        if (amountOwedCents === 0 || p.memberId === s.memberId) continue;
+
+        flows.push({
+          debtorId: s.memberId,
+          creditorId: p.memberId,
+          amountCents: amountOwedCents,
+        });
+      }
+    }
+    return flows;
   }
 
   async create(
@@ -209,6 +241,17 @@ export class ExpensesService {
         })),
       });
 
+      const currency = dto.currency || 'USD';
+
+      // 7. Update MemberBalances & Debts
+      await this.applyExpenseEffects(
+        tx,
+        groupId,
+        currency,
+        dto.payers,
+        splitData,
+      );
+
       const createdExpense = await tx.expense.findUnique({
         where: { id: expense.id },
         include: {
@@ -223,133 +266,6 @@ export class ExpensesService {
 
       if (!createdExpense) {
         throw new Error('Expense creation failed');
-      }
-
-      // 7. Update MemberBalances
-      const currency = dto.currency || 'USD';
-
-      // Update for payers
-      for (const p of dto.payers) {
-        await tx.memberBalance.upsert({
-          where: {
-            groupId_memberId_currency: {
-              groupId,
-              memberId: p.memberId,
-              currency,
-            },
-          },
-          create: {
-            groupId,
-            memberId: p.memberId,
-            currency,
-            balance: p.amount,
-          },
-          update: {
-            balance: { increment: p.amount },
-          },
-        });
-      }
-
-      // Update for splitters
-      for (const s of splitData) {
-        await tx.memberBalance.upsert({
-          where: {
-            groupId_memberId_currency: {
-              groupId,
-              memberId: s.memberId,
-              currency,
-            },
-          },
-          create: {
-            groupId,
-            memberId: s.memberId,
-            currency,
-            balance: -fromCents(s.amountCents),
-          },
-          update: {
-            balance: { decrement: fromCents(s.amountCents) },
-          },
-        });
-      }
-
-      // 8. Update Debts (Net debt change between payers and splitters)
-      // For each payer and each splitter, calculate the amount the splitter owes to this payer for this specific expense.
-      // Amount owed = (Payer's contribution / Total amount) * Splitter's share
-      const payerWeights = dto.payers.map((p) => toCents(p.amount));
-
-      for (const s of splitData) {
-        const allocatedCents = this.allocateByWeights(
-          payerWeights,
-          s.amountCents,
-        );
-
-        for (let i = 0; i < dto.payers.length; i++) {
-          const p = dto.payers[i];
-          const amountOwedCents = allocatedCents[i];
-
-          if (amountOwedCents === 0 || p.memberId === s.memberId) continue;
-
-          // Enforce canonical net debt direction
-          // 1. Check if the reverse debt (p owes s) exists
-          const reverseDebt = await tx.debt.findUnique({
-            where: {
-              groupId_debtorId_creditorId_currency: {
-                groupId,
-                debtorId: p.memberId,
-                creditorId: s.memberId,
-                currency,
-              },
-            },
-          });
-
-          let remainingNewDebtCents = amountOwedCents;
-
-          if (reverseDebt) {
-            const reverseDebtCents = toCents(Number(reverseDebt.amount));
-            if (reverseDebtCents >= remainingNewDebtCents) {
-              // Existing reverse debt covers the new debt entirely
-              const updatedReverseCents =
-                reverseDebtCents - remainingNewDebtCents;
-              if (updatedReverseCents === 0) {
-                await tx.debt.delete({ where: { id: reverseDebt.id } });
-              } else {
-                await tx.debt.update({
-                  where: { id: reverseDebt.id },
-                  data: { amount: fromCents(updatedReverseCents) },
-                });
-              }
-              remainingNewDebtCents = 0;
-            } else {
-              // New debt is larger than reverse debt, clear reverse and continue with remainder
-              await tx.debt.delete({ where: { id: reverseDebt.id } });
-              remainingNewDebtCents -= reverseDebtCents;
-            }
-          }
-
-          if (remainingNewDebtCents > 0) {
-            const amountOwed = fromCents(remainingNewDebtCents);
-            await tx.debt.upsert({
-              where: {
-                groupId_debtorId_creditorId_currency: {
-                  groupId,
-                  debtorId: s.memberId,
-                  creditorId: p.memberId,
-                  currency,
-                },
-              },
-              create: {
-                groupId,
-                debtorId: s.memberId,
-                creditorId: p.memberId,
-                currency,
-                amount: amountOwed,
-              },
-              update: {
-                amount: { increment: amountOwed },
-              },
-            });
-          }
-        }
       }
 
       return {
@@ -733,5 +649,449 @@ export class ExpensesService {
     });
 
     return allSettlements;
+  }
+
+  async updateExpense(
+    groupId: string,
+    expenseId: string,
+    userId: string,
+    dto: UpdateExpenseDto,
+  ): Promise<ExpenseResponse> {
+    // 1. Verify membership and authorization
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!member || member.deletedAt) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    // 2. Fetch old expense
+    const oldExpense = await this.prisma.expense.findUnique({
+      where: { id: expenseId, groupId, deletedAt: null },
+      include: {
+        payers: { include: { member: true } },
+        splits: { include: { member: true } },
+      },
+    });
+    if (!oldExpense) {
+      throw new NotFoundException('Expense not found');
+    }
+
+    // Prepare new data
+    const description = dto.description;
+    const amount = dto.amount;
+    const splitType = dto.splitType;
+    const currency = dto.currency || 'USD';
+    const date = dto.date || new Date();
+    const payers = dto.payers;
+    const splits = dto.splits;
+
+    // Re-validate payers and calculate new splits
+    const totalCents = toCents(amount);
+    const payersTotalCents = payers.reduce(
+      (sum: number, p: { amount: number }) => sum + toCents(p.amount),
+      0,
+    );
+    if (payersTotalCents !== totalCents) {
+      throw new BadRequestException(
+        `Total payers amount (${fromCents(payersTotalCents)}) must equal expense amount (${amount})`,
+      );
+    }
+
+    const splitData: {
+      memberId: string;
+      amountCents: number;
+      share?: number;
+      percentage?: number;
+    }[] = [];
+
+    switch (splitType) {
+      case SplitType.EVEN: {
+        const participantIds = splits.map(
+          (s: { memberId: string }) => s.memberId,
+        );
+        if (participantIds.length === 0) {
+          throw new BadRequestException('At least one participant is required');
+        }
+        const cents = this.allocateByWeights(
+          new Array(participantIds.length).fill(1),
+          totalCents,
+        );
+        participantIds.forEach((memberId: string, i: number) => {
+          splitData.push({ memberId, amountCents: cents[i] });
+        });
+        break;
+      }
+      case SplitType.EXACT: {
+        const splitCentsSum = splits.reduce(
+          (sum: number, s: { amount?: number }) => sum + toCents(s.amount || 0),
+          0,
+        );
+        if (splitCentsSum !== totalCents) {
+          throw new BadRequestException(
+            `Exact split amounts must sum to ${amount}. Currently ${fromCents(splitCentsSum)}`,
+          );
+        }
+        splits.forEach((s: { memberId: string; amount?: number }) => {
+          splitData.push({
+            memberId: s.memberId,
+            amountCents: toCents(s.amount || 0),
+          });
+        });
+        break;
+      }
+      case SplitType.PERCENTAGE: {
+        const percentages = splits.map(
+          (s: { percentage?: number }) => s.percentage || 0,
+        );
+        const percentSum = percentages.reduce(
+          (a: number, b: number) => a + b,
+          0,
+        );
+        if (Math.round(percentSum * 100) !== 10000) {
+          throw new BadRequestException(
+            `Percentages must sum to 100%. Currently ${percentSum}%`,
+          );
+        }
+        const cents = this.allocateByWeights(percentages, totalCents);
+        splits.forEach(
+          (s: { memberId: string; percentage?: number }, i: number) => {
+            splitData.push({
+              memberId: s.memberId,
+              amountCents: cents[i],
+              percentage: s.percentage,
+            });
+          },
+        );
+        break;
+      }
+      case SplitType.SHARES: {
+        const shares = splits.map((s: { share?: number }) => s.share || 0);
+        const totalShares = shares.reduce((a: number, b: number) => a + b, 0);
+        if (totalShares <= 0) {
+          throw new BadRequestException('Total shares must be greater than 0');
+        }
+        const cents = this.allocateByWeights(shares, totalCents);
+        splits.forEach((s: { memberId: string; share?: number }, i: number) => {
+          splitData.push({
+            memberId: s.memberId,
+            amountCents: cents[i],
+            share: s.share,
+          });
+        });
+        break;
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // 3. REVERSE old effects
+      await this.reverseExpenseEffects(tx, groupId, oldExpense);
+
+      // 4. Update the expense (with optimistic locking)
+      const updatedExpense = await tx.expense.update({
+        where: {
+          id: expenseId,
+          updatedAt: oldExpense.updatedAt,
+        },
+        data: {
+          description,
+          amount,
+          splitType,
+          currency,
+          date,
+          // Clear old payers and splits to replace them
+          payers: { deleteMany: {} },
+          splits: { deleteMany: {} },
+        },
+      });
+
+      // 5. Create new payers and splits
+      await tx.expensePayer.createMany({
+        data: payers.map((p: { memberId: string; amount: number }) => ({
+          expenseId: updatedExpense.id,
+          memberId: p.memberId,
+          amount: p.amount,
+        })),
+      });
+
+      await tx.expenseSplit.createMany({
+        data: splitData.map((s) => ({
+          expenseId: updatedExpense.id,
+          memberId: s.memberId,
+          amount: fromCents(s.amountCents),
+          share: s.share,
+          percentage: s.percentage,
+        })),
+      });
+
+      // 6. Apply NEW effects
+      await this.applyExpenseEffects(tx, groupId, currency, payers, splitData);
+
+      const finalExpense = await tx.expense.findUnique({
+        where: { id: updatedExpense.id },
+        include: {
+          payers: { include: { member: true } },
+          splits: true,
+        },
+      });
+
+      if (!finalExpense) throw new Error('Expense update failed');
+
+      return {
+        id: finalExpense.id,
+        groupId: finalExpense.groupId,
+        description: finalExpense.description,
+        amount: Number(finalExpense.amount),
+        splitType: finalExpense.splitType,
+        currency: finalExpense.currency,
+        date: finalExpense.date,
+        payers: finalExpense.payers.map((p) => ({
+          memberId: p.memberId,
+          amount: Number(p.amount),
+          name: p.member.name,
+        })),
+        splits: finalExpense.splits.map((s) => ({
+          memberId: s.memberId,
+          amount: Number(s.amount),
+          share: s.share ? Number(s.share) : null,
+          percentage: s.percentage ? Number(s.percentage) : null,
+        })),
+      };
+    });
+  }
+
+  async deleteExpense(
+    groupId: string,
+    expenseId: string,
+    userId: string,
+  ): Promise<void> {
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!member || member.deletedAt) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const expense = await this.prisma.expense.findUnique({
+      where: { id: expenseId, groupId, deletedAt: null },
+      include: {
+        payers: { include: { member: true } },
+        splits: { include: { member: true } },
+      },
+    });
+    if (!expense) {
+      throw new NotFoundException('Expense not found');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.reverseExpenseEffects(tx, groupId, expense);
+
+      await tx.expense.update({
+        where: {
+          id: expenseId,
+          updatedAt: expense.updatedAt,
+        },
+        data: { deletedAt: new Date() },
+      });
+    });
+  }
+
+  private async reverseExpenseEffects(
+    tx: Prisma.TransactionClient,
+    groupId: string,
+    expense: ExpenseWithRelations,
+  ) {
+    const currency = expense.currency;
+
+    // 1. Reverse MemberBalances
+    for (const p of expense.payers) {
+      const amount = Number(p.amount);
+      await tx.memberBalance.upsert({
+        where: {
+          groupId_memberId_currency: {
+            groupId,
+            memberId: p.memberId,
+            currency,
+          },
+        },
+        create: {
+          groupId,
+          memberId: p.memberId,
+          currency,
+          balance: -amount,
+        },
+        update: { balance: { decrement: amount } },
+      });
+    }
+
+    for (const s of expense.splits) {
+      const amount = Number(s.amount);
+      await tx.memberBalance.upsert({
+        where: {
+          groupId_memberId_currency: {
+            groupId,
+            memberId: s.memberId,
+            currency,
+          },
+        },
+        create: {
+          groupId,
+          memberId: s.memberId,
+          currency,
+          balance: amount,
+        },
+        update: { balance: { increment: amount } },
+      });
+    }
+
+    // 2. Reverse Debts
+    const payers = expense.payers.map((p) => ({
+      memberId: p.memberId,
+      amount: Number(p.amount),
+    }));
+    const splits = expense.splits.map((s) => ({
+      memberId: s.memberId,
+      amountCents: toCents(Number(s.amount)),
+    }));
+
+    const flows = this.calculateDebtFlows(payers, splits);
+    for (const flow of flows) {
+      // To reverse, we act as if creditor owes debtor
+      await this.updateDebtAtomic(
+        tx,
+        groupId,
+        flow.creditorId,
+        flow.debtorId,
+        currency,
+        flow.amountCents,
+      );
+    }
+  }
+
+  private async applyExpenseEffects(
+    tx: Prisma.TransactionClient,
+    groupId: string,
+    currency: string,
+    payers: { memberId: string; amount: number }[],
+    splitData: { memberId: string; amountCents: number }[],
+  ) {
+    // 1. Update MemberBalances
+    for (const p of payers) {
+      await tx.memberBalance.upsert({
+        where: {
+          groupId_memberId_currency: {
+            groupId,
+            memberId: p.memberId,
+            currency,
+          },
+        },
+        create: {
+          groupId,
+          memberId: p.memberId,
+          currency,
+          balance: p.amount,
+        },
+        update: { balance: { increment: p.amount } },
+      });
+    }
+
+    for (const s of splitData) {
+      const amount = fromCents(s.amountCents);
+      await tx.memberBalance.upsert({
+        where: {
+          groupId_memberId_currency: {
+            groupId,
+            memberId: s.memberId,
+            currency,
+          },
+        },
+        create: {
+          groupId,
+          memberId: s.memberId,
+          currency,
+          balance: -amount,
+        },
+        update: { balance: { decrement: amount } },
+      });
+    }
+
+    // 2. Update Debts
+    const flows = this.calculateDebtFlows(payers, splitData);
+    for (const flow of flows) {
+      await this.updateDebtAtomic(
+        tx,
+        groupId,
+        flow.debtorId,
+        flow.creditorId,
+        currency,
+        flow.amountCents,
+      );
+    }
+  }
+
+  private async updateDebtAtomic(
+    tx: Prisma.TransactionClient,
+    groupId: string,
+    debtorId: string,
+    creditorId: string,
+    currency: string,
+    amountCents: number,
+  ) {
+    // 1. Check if reverse debt (creditorId owes debtorId) exists
+    const reverseDebt = await tx.debt.findUnique({
+      where: {
+        groupId_debtorId_creditorId_currency: {
+          groupId,
+          debtorId: creditorId,
+          creditorId: debtorId,
+          currency,
+        },
+      },
+    });
+
+    let remainingNewDebtCents = amountCents;
+
+    if (reverseDebt) {
+      const reverseDebtCents = toCents(Number(reverseDebt.amount));
+      if (reverseDebtCents >= remainingNewDebtCents) {
+        const updatedReverseCents = reverseDebtCents - remainingNewDebtCents;
+        if (updatedReverseCents === 0) {
+          await tx.debt.delete({ where: { id: reverseDebt.id } });
+        } else {
+          await tx.debt.update({
+            where: { id: reverseDebt.id },
+            data: { amount: fromCents(updatedReverseCents) },
+          });
+        }
+        remainingNewDebtCents = 0;
+      } else {
+        await tx.debt.delete({ where: { id: reverseDebt.id } });
+        remainingNewDebtCents -= reverseDebtCents;
+      }
+    }
+
+    if (remainingNewDebtCents > 0) {
+      const amount = fromCents(remainingNewDebtCents);
+      await tx.debt.upsert({
+        where: {
+          groupId_debtorId_creditorId_currency: {
+            groupId,
+            debtorId,
+            creditorId,
+            currency,
+          },
+        },
+        create: {
+          groupId,
+          debtorId,
+          creditorId,
+          currency,
+          amount,
+        },
+        update: {
+          amount: { increment: amount },
+        },
+      });
+    }
   }
 }

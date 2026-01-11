@@ -2,7 +2,7 @@
 
 This document provides a comprehensive review of the backend architecture, features, and implementation details for the SplitMoney application.
 
-Last updated: 2026-01-09 22:55
+Last updated: 2026-01-11 14:30
 
 ---
 
@@ -82,10 +82,14 @@ Last updated: 2026-01-09 22:55
 *   **Precise Data Mapping**: Explicitly mapping Prisma `Decimal` types to `number` in API responses to ensure consistency.
 *   **Detailed Payer Information**: Enhanced `TransactionHistoryItem` and `ExpenseResponse` to include comprehensive payer details (ID, name, and amount), ensuring clear visibility of who paid for each expense.
 
+#### ✅ Expense Management (CRUD)
+*   **Update Expense**: Implemented a robust "reverse and reapply" logic for editing expenses. It ensures that balances and debts are correctly adjusted by first undoing the old expense's effects and then applying the new ones within a single atomic transaction.
+*   **Delete Expense**: Implemented soft-delete for expenses, which also triggers a full reversal of its financial impact on member balances and group debts.
+*   **Integer Cent Math**: All financial calculations are performed using integer cents to prevent floating-point rounding errors and ensure exact balancing.
+
 ---
 
 ### 5. Future Roadmap
-1.  **RESTful APIs**: Complete the remaining CRUD operations for Expenses.
-2.  **WebSockets**: Real-time updates when expenses are added or edited by other group members.
-3.  **API Documentation**: Integrate Swagger (OpenAPI) for interactive API documentation.
-4.  **Unit & E2E Testing**: Add Jest tests for Auth and Business logic services.
+1.  **WebSockets**: Real-time updates when expenses are added or edited by other group members.
+2.  **API Documentation**: Integrate Swagger (OpenAPI) for interactive API documentation.
+3.  **Unit & E2E Testing**: Add Jest tests for Auth and Business logic services.
