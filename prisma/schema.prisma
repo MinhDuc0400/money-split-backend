@@ -64,9 +64,47 @@ model Group {
   members  GroupMember[]
   expenses Expense[]
   settlements Settlement[]
+  memberBalances MemberBalance[]
+  debts          Debt[]
 
   @@index([inviteCode])
   @@map("groups")
+}
+
+/* -------------------- MEMBER BALANCE -------------------- */
+
+model MemberBalance {
+  id        String   @id @default(uuid())
+  groupId   String   @map("group_id")
+  memberId  String   @map("member_id")
+  balance   Decimal  @db.Decimal(18, 6) @default(0)
+  currency  String   @default("USD")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  group  Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  member GroupMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, memberId, currency])
+  @@map("member_balances")
+}
+
+/* -------------------- DEBT -------------------- */
+
+model Debt {
+  id         String   @id @default(uuid())
+  groupId    String   @map("group_id")
+  debtorId   String   @map("debtor_id")
+  creditorId String   @map("creditor_id")
+  amount     Decimal  @db.Decimal(18, 6) @default(0)
+  currency   String   @default("USD")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  group    Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  debtor   GroupMember @relation("DebtDebtor", fields: [debtorId], references: [id], onDelete: Cascade)
+  creditor GroupMember @relation("DebtCreditor", fields: [creditorId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, debtorId, creditorId, currency])
+  @@map("debts")
 }
 
 /* -------------------- GROUP MEMBER -------------------- */
@@ -88,6 +126,9 @@ model GroupMember {
   expenseSplits    ExpenseSplit[]
   settlementsFrom  Settlement[]    @relation("SettlementFrom")
   settlementsTo    Settlement[]    @relation("SettlementTo")
+  memberBalances   MemberBalance[]
+  debtsAsDebtor    Debt[]          @relation("DebtDebtor")
+  debtsAsCreditor  Debt[]          @relation("DebtCreditor")
 
   @@unique([groupId, userId])
   @@index([groupId])

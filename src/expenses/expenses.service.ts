@@ -225,6 +225,100 @@ export class ExpensesService {
         throw new Error('Expense creation failed');
       }
 
+      // 7. Update MemberBalances
+      const currency = dto.currency || 'USD';
+
+      // Update for payers
+      for (const p of dto.payers) {
+        await tx.memberBalance.upsert({
+          where: {
+            groupId_memberId_currency: {
+              groupId,
+              memberId: p.memberId,
+              currency,
+            },
+          },
+          create: {
+            groupId,
+            memberId: p.memberId,
+            currency,
+            balance: p.amount,
+          },
+          update: {
+            balance: { increment: p.amount },
+          },
+        });
+      }
+
+      // Update for splitters
+      for (const s of splitData) {
+        await tx.memberBalance.upsert({
+          where: {
+            groupId_memberId_currency: {
+              groupId,
+              memberId: s.memberId,
+              currency,
+            },
+          },
+          create: {
+            groupId,
+            memberId: s.memberId,
+            currency,
+            balance: -fromCents(s.amountCents),
+          },
+          update: {
+            balance: { decrement: fromCents(s.amountCents) },
+          },
+        });
+      }
+
+      // 8. Update Debts (Net debt change between payers and splitters)
+      // For each payer and each splitter, calculate the amount the splitter owes to this payer for this specific expense.
+      // Amount owed = (Payer's contribution / Total amount) * Splitter's share
+      for (const p of dto.payers) {
+        const payerCents = toCents(p.amount);
+        if (payerCents === 0) continue;
+
+        for (const s of splitData) {
+          if (p.memberId === s.memberId) continue; // Payer doesn't owe themselves to the Debt table
+
+          // How much of this splitter's share was paid by this specific payer?
+          // (payerAmount / totalAmount) * splitterAmount
+          const amountOwedCents = Math.round(
+            (payerCents * s.amountCents) / totalCents,
+          );
+          if (amountOwedCents === 0) continue;
+
+          const amountOwed = fromCents(amountOwedCents);
+
+          // Update debt: splitter owes payer
+          // We always store Debt as "debtorId owes creditorId amount"
+          // If we already have a record where payer owes splitter, we should ideally net it out.
+          // But the Debt model is directional: [groupId, debtorId, creditorId, currency
+
+          await tx.debt.upsert({
+            where: {
+              groupId_debtorId_creditorId_currency: {
+                groupId,
+                debtorId: s.memberId,
+                creditorId: p.memberId,
+                currency,
+              },
+            },
+            create: {
+              groupId,
+              debtorId: s.memberId,
+              creditorId: p.memberId,
+              currency,
+              amount: amountOwed,
+            },
+            update: {
+              amount: { increment: amountOwed },
+            },
+          });
+        }
+      }
+
       return {
         id: createdExpense.id,
         groupId: createdExpense.groupId,
@@ -375,73 +469,46 @@ export class ExpensesService {
       where: { groupId, deletedAt: null },
     });
 
-    const expenses = await this.prisma.expense.findMany({
-      where: { groupId, deletedAt: null },
-      include: {
-        payers: true,
-        splits: true,
-      },
+    const memberBalances = await this.prisma.memberBalance.findMany({
+      where: { groupId },
     });
 
-    const settlements = await this.prisma.settlement.findMany({
-      where: {
-        groupId,
-        deletedAt: null,
-        status: 'COMPLETED',
-      },
-    });
-
-    // Use a temporary structure to hold integer cents
-    const balancesByCurrencyCents: {
-      [currency: string]: { [memberId: string]: number };
-    } = {};
-
-    // Process expenses
-    expenses.forEach((expense) => {
-      const currency = expense.currency;
-      if (!balancesByCurrencyCents[currency]) {
-        balancesByCurrencyCents[currency] = {};
-        members.forEach((m) => (balancesByCurrencyCents[currency][m.id] = 0));
-      }
-
-      const balances = balancesByCurrencyCents[currency];
-
-      expense.payers.forEach((payer) => {
-        balances[payer.memberId] += toCents(Number(payer.amount));
-      });
-
-      expense.splits.forEach((split) => {
-        balances[split.memberId] -= toCents(Number(split.amount));
-      });
-    });
-
-    // Process settlements (completed ones)
-    settlements.forEach((s) => {
-      const currency = s.currency;
-      if (!balancesByCurrencyCents[currency]) {
-        balancesByCurrencyCents[currency] = {};
-        members.forEach((m) => (balancesByCurrencyCents[currency][m.id] = 0));
-      }
-      const balances = balancesByCurrencyCents[currency];
-      balances[s.fromId] += toCents(Number(s.amount));
-      balances[s.toId] -= toCents(Number(s.amount));
-    });
-
-    // Convert back to decimal for output
     const balancesByCurrency: BalancesByCurrency = {};
     const memberMap = new Map(members.map((m) => [m.id, m]));
 
-    Object.keys(balancesByCurrencyCents).forEach((currency) => {
-      balancesByCurrency[currency] = Object.keys(
-        balancesByCurrencyCents[currency],
-      ).map((memberId) => {
-        const m = memberMap.get(memberId)!;
-        return {
-          memberId,
+    // Group balances by currency
+    memberBalances.forEach((mb) => {
+      const currency = mb.currency;
+      if (!balancesByCurrency[currency]) {
+        balancesByCurrency[currency] = [];
+      }
+
+      const m = memberMap.get(mb.memberId);
+      if (m && !m.deletedAt) {
+        balancesByCurrency[currency].push({
+          memberId: mb.memberId,
           name: m.name,
           avatarUrl: m.avatarUrl,
-          balance: fromCents(balancesByCurrencyCents[currency][memberId]),
-        };
+          balance: Number(mb.balance),
+        });
+      }
+    });
+
+    // Ensure all members are included in each currency if they have no balance record yet
+    const currencies = Object.keys(balancesByCurrency);
+    currencies.forEach((currency) => {
+      const presentMemberIds = new Set(
+        balancesByCurrency[currency].map((b) => b.memberId),
+      );
+      members.forEach((m) => {
+        if (!presentMemberIds.has(m.id)) {
+          balancesByCurrency[currency].push({
+            memberId: m.id,
+            name: m.name,
+            avatarUrl: m.avatarUrl,
+            balance: 0,
+          });
+        }
       });
     });
 
@@ -452,9 +519,6 @@ export class ExpensesService {
     groupId: string,
     userId: string,
   ): Promise<UserBalanceResponse> {
-    const balancesByCurrency = await this.getBalances(groupId, userId);
-    const settlementsByCurrency = await this.getSettlements(groupId, userId);
-
     const members = await this.prisma.groupMember.findMany({
       where: { groupId, deletedAt: null },
     });
@@ -464,44 +528,88 @@ export class ExpensesService {
       throw new ForbiddenException('You are not a member of this group');
     }
 
+    const debtsAsDebtor = await this.prisma.debt.findMany({
+      where: { groupId, debtorId: currentUserMember.id },
+      include: { creditor: true },
+    });
+
+    const debtsAsCreditor = await this.prisma.debt.findMany({
+      where: { groupId, creditorId: currentUserMember.id },
+      include: { debtor: true },
+    });
+
     const response: UserBalanceResponse = { balances: {} };
 
-    Object.keys(balancesByCurrency).forEach((currency) => {
+    // Temporary storage to aggregate by currency and member
+    const aggregation: {
+      [currency: string]: {
+        [memberId: string]: {
+          name: string;
+          avatarUrl: string | null;
+          netAmount: number;
+        };
+      };
+    } = {};
+
+    // Process debts where user is the debtor (user owes others)
+    debtsAsDebtor.forEach((d) => {
+      const currency = d.currency;
+      if (!aggregation[currency]) aggregation[currency] = {};
+
+      const mId = d.creditorId;
+      if (!aggregation[currency][mId]) {
+        aggregation[currency][mId] = {
+          name: d.creditor.name,
+          avatarUrl: d.creditor.avatarUrl,
+          netAmount: 0,
+        };
+      }
+      aggregation[currency][mId].netAmount -= Number(d.amount);
+    });
+
+    // Process debts where user is the creditor (others owe user)
+    debtsAsCreditor.forEach((d) => {
+      const currency = d.currency;
+      if (!aggregation[currency]) aggregation[currency] = {};
+
+      const mId = d.debtorId;
+      if (!aggregation[currency][mId]) {
+        aggregation[currency][mId] = {
+          name: d.debtor.name,
+          avatarUrl: d.debtor.avatarUrl,
+          netAmount: 0,
+        };
+      }
+      aggregation[currency][mId].netAmount += Number(d.amount);
+    });
+
+    // Build the response from aggregation
+    Object.keys(aggregation).forEach((currency) => {
+      let totalOwed = 0;
+      let totalOwe = 0;
       const details: UserBalanceResponse['balances'][string]['details'] = [];
-      let totalOwedCents = 0;
-      let totalOweCents = 0;
 
-      // Use the calculated settlements to figure out who owes who
-      const currencySettlements = settlementsByCurrency.filter(
-        (s) => s.currency === currency,
-      );
+      Object.keys(aggregation[currency]).forEach((mId) => {
+        const item = aggregation[currency][mId];
+        if (item.netAmount > 0) {
+          totalOwed += item.netAmount;
+        } else if (item.netAmount < 0) {
+          totalOwe += Math.abs(item.netAmount);
+        }
 
-      currencySettlements.forEach((s) => {
-        const amountCents = toCents(s.amount);
-        if (s.from.memberId === currentUserMember.id) {
-          // User owes s.to
-          totalOweCents += amountCents;
+        if (item.netAmount !== 0) {
           details.push({
-            memberId: s.to.memberId,
-            name: s.to.name || 'Unknown',
-            avatarUrl: s.to.avatarUrl || null,
-            amount: -s.amount,
-          });
-        } else if (s.to.memberId === currentUserMember.id) {
-          // s.from owes user
-          totalOwedCents += amountCents;
-          details.push({
-            memberId: s.from.memberId,
-            name: s.from.name || 'Unknown',
-            avatarUrl: s.from.avatarUrl || null,
-            amount: s.amount,
+            memberId: mId,
+            name: item.name,
+            avatarUrl: item.avatarUrl,
+            amount: item.netAmount,
           });
         }
       });
 
       response.balances[currency] = {
-        totalOwed: fromCents(totalOwedCents),
-        totalOwe: fromCents(totalOweCents),
+        totalOwed,
+        totalOwe,
         details,
       };
     });
