@@ -54,27 +54,51 @@ export class ExpensesService {
     splits: { memberId: string; amountCents: number }[],
   ): DebtFlow[] {
     const flows: DebtFlow[] = [];
-    const payerWeights = payers.map((p) => toCents(p.amount));
+    const payerCents = payers.map((p) => ({
+      memberId: p.memberId,
+      amountCents: toCents(p.amount),
+    }));
+
+    let payerIndex = 0;
+    let currentPayerOffset = 0;
+    let splitterOffset = 0;
 
     for (const s of splits) {
-      const allocatedCents = this.allocateByWeights(
-        payerWeights,
-        s.amountCents,
-      );
+      const splitterNextOffset = splitterOffset + s.amountCents;
+      while (
+        payerIndex < payerCents.length &&
+        currentPayerOffset < splitterNextOffset
+      ) {
+        const p = payerCents[payerIndex];
+        const payerNextOffset = currentPayerOffset + p.amountCents;
 
-      for (let i = 0; i < payers.length; i++) {
-        const p = payers[i];
-        const amountOwedCents = allocatedCents[i];
+        // Intersection of [splitterOffset, splitterNextOffset] and [currentPayerOffset, payerNextOffset]
+        const overlapStart = Math.max(splitterOffset, currentPayerOffset);
+        const overlapEnd = Math.min(splitterNextOffset, payerNextOffset);
+        const overlap = overlapEnd - overlapStart;
 
-        if (amountOwedCents === 0 || p.memberId === s.memberId) continue;
+        if (overlap > 0 && s.memberId !== p.memberId) {
+          // Debt invariant: For each splitter S and each payer P:
+          // S owes P = splitAmount(S) * (payerPaid / totalPaid).
+          // We use an intersection of ranges to implement this proportionally in integer cents without drift.
+          flows.push({
+            debtorId: s.memberId,
+            creditorId: p.memberId,
+            amountCents: overlap,
+          });
+        }
 
-        flows.push({
-          debtorId: s.memberId,
-          creditorId: p.memberId,
-          amountCents: amountOwedCents,
-        });
+        if (payerNextOffset <= splitterNextOffset) {
+          payerIndex++;
+          currentPayerOffset = payerNextOffset;
+        } else {
+          currentPayerOffset = overlapEnd; // Move pointer to end of splitter range
+          break;
+        }
       }
+      splitterOffset = splitterNextOffset;
     }
+
     return flows;
   }
 
