@@ -50,36 +50,15 @@ FRONTEND_URL="http://localhost:5173"
 
 ### 3. Set Up Database and Server
 
-#### Option A: Using Docker (Recommended - Run Everything)
+Ensure you have a PostgreSQL database running locally, then:
 
-If you have Docker installed, you can start both the PostgreSQL database and the NestJS server with a single command:
-
-```bash
-docker-compose up -d --build
-```
-
-This will:
-1. Start a PostgreSQL database.
-2. Build the NestJS application image.
-3. Start the application container.
-4. The API will be available at `http://localhost:3000`.
-
-#### Option B: Manual Setup (Database only with Docker)
-
-If you only want to run the database in Docker and run the server locally (for development):
-
-1. Start the database:
-   ```bash
-   docker-compose up -d db
-   ```
-
-2. Run database migrations:
+1. Run database migrations:
    ```bash
    npx prisma generate
    npx prisma migrate dev --name init
    ```
 
-3. Start the application:
+2. Start the application:
    ```bash
    npm run start:dev
    ```

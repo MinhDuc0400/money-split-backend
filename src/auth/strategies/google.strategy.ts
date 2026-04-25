@@ -12,19 +12,18 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     configService: ConfigService,
     private authService: AuthService,
   ) {
+    const isPlaceholder = (v: string | undefined) =>
+      !v || v.startsWith('your-') || v === '';
+
     const clientID = configService.get<string>('GOOGLE_CLIENT_ID');
     const clientSecret = configService.get<string>('GOOGLE_CLIENT_SECRET');
-    const callbackURL = configService.get<string>('GOOGLE_CALLBACK_URL');
-
-    if (!clientID || !clientSecret || !callbackURL) {
-      throw new Error(
-        'Google OAuth configuration is missing. Please check your .env file for GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_CALLBACK_URL.',
-      );
-    }
+    const callbackURL =
+      configService.get<string>('GOOGLE_CALLBACK_URL') ||
+      'http://localhost:3000/auth/google/callback';
 
     super({
-      clientID,
-      clientSecret,
+      clientID: isPlaceholder(clientID) ? 'DISABLED' : clientID!,
+      clientSecret: isPlaceholder(clientSecret) ? 'DISABLED' : clientSecret!,
       callbackURL,
       scope: ['email', 'profile'],
     });

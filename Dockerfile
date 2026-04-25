@@ -1,36 +1,43 @@
-# Use Node.js as the base image
-FROM node:20-alpine AS builder
-
-# Create app directory
+# ─── Stage 1: deps (all deps, needed for build) ──────────────────────────────
+FROM node:20-alpine AS deps
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
-COPY prisma ./prisma/
+RUN npm ci
 
-# Install dependencies
-RUN npm install
+# ─── Stage 1b: prod-deps (production-only deps) ──────────────────────────────
+FROM node:20-alpine AS prod-deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-# Copy source code
+# ─── Stage 2: development ────────────────────────────────────────────────────
+FROM node:20-alpine AS development
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npx prisma generate
+CMD ["npm", "run", "start:dev"]
 
-# Build the application
+# ─── Stage 3: builder ────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npx prisma generate
 RUN npm run build
 
-# Production stage
-FROM node:20-alpine
-
+# ─── Stage 4: production ─────────────────────────────────────────────────────
+FROM node:20-alpine AS production
 WORKDIR /app
+ENV NODE_ENV=production
 
-# Copy only necessary files from builder
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package*.json ./
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+COPY package*.json ./
 
-# Expose the application port
+# Regenerate prisma client for production image
+RUN npx prisma generate
+
 EXPOSE 3000
-
-# Start the application
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run start:prod"]
+CMD ["node", "dist/main"]
