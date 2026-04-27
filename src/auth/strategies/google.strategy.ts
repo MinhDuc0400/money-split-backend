@@ -3,8 +3,8 @@ import { Strategy, Profile } from 'passport-google-oauth20';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
-
 import { GoogleUser } from '../interfaces/google-user.interface';
+import type { Request } from 'express';
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
@@ -26,10 +26,12 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       clientSecret: isPlaceholder(clientSecret) ? 'DISABLED' : clientSecret!,
       callbackURL,
       scope: ['email', 'profile'],
+      passReqToCallback: true,
     });
   }
 
   async validate(
+    req: Request,
     accessToken: string,
     _refreshToken: string,
     profile: Profile,
@@ -44,6 +46,8 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       accessToken,
     };
     
-    return this.authService.validateGoogleUser(user);
+    const validated = await this.authService.validateGoogleUser(user);
+    const mobileRedirect = (req.query['mobile_redirect'] as string) || null;
+    return { ...validated, mobileRedirect };
   }
 }
