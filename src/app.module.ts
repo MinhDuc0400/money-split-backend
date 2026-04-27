@@ -7,7 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { GroupsModule } from './groups/groups.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { SettlementsModule } from './settlements/settlements.module';
-
+import { EventsModule } from './events/events.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -18,6 +18,7 @@ import { SettlementsModule } from './settlements/settlements.module';
     GroupsModule,
     ExpensesModule,
     SettlementsModule,
+    EventsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

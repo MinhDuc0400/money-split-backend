@@ -45,7 +45,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       picture: photos?.[0]?.value || '',
       accessToken,
     };
-    
+
     const validated = await this.authService.validateGoogleUser(user);
     const mobileRedirect = (req.query['mobile_redirect'] as string) || null;
     return { ...validated, mobileRedirect };

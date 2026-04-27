@@ -13,10 +13,14 @@ import {
 import { Prisma, SettlementStatus } from '@prisma/client';
 import { toCents, fromCents } from '../helpers/number.helper';
 import { calculateMinimalTransfers } from './settlement.algo';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class SettlementsService {
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private eventsGateway: EventsGateway,
+  ) {}
 
   async createSettlement(
     groupId: string,
@@ -72,7 +76,9 @@ export class SettlementsService {
         note,
       );
 
-      return this.mapSettlementResponse(settlement);
+      const result = this.mapSettlementResponse(settlement);
+      this.eventsGateway.emitSettlementUpdated(groupId, result);
+      return result;
     });
   }
 
@@ -153,9 +159,11 @@ export class SettlementsService {
     return settlement;
   }
 
-  private mapSettlementResponse(settlement: Prisma.SettlementGetPayload<{
-    include: { from: true; to: true }
-  }>): SettlementResponse {
+  private mapSettlementResponse(
+    settlement: Prisma.SettlementGetPayload<{
+      include: { from: true; to: true };
+    }>,
+  ): SettlementResponse {
     return {
       id: settlement.id,
       from: {
@@ -314,12 +322,13 @@ export class SettlementsService {
             'Automatic Settle Up',
           );
 
-          createdSettlements.push(
-            this.mapSettlementResponse(settlement),
-          );
+          createdSettlements.push(this.mapSettlementResponse(settlement));
         }
       }
 
+      for (const s of createdSettlements) {
+        this.eventsGateway.emitSettlementUpdated(groupId, s);
+      }
       return { settlements: createdSettlements };
     });
   }

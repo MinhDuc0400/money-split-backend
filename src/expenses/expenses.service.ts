@@ -18,10 +18,14 @@ import {
 } from './types/expense-responses.type';
 import { fromCents, toCents } from '../helpers/number.helper';
 import { DebtFlow, ExpenseWithRelations } from './types/expense-internal.types';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class ExpensesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventsGateway: EventsGateway,
+  ) {}
 
   private allocateByWeights(weights: number[], totalCents: number): number[] {
     const totalWeight = weights.reduce((a, b) => a + b, 0);
@@ -292,7 +296,7 @@ export class ExpensesService {
         throw new Error('Expense creation failed');
       }
 
-      return {
+      const result = {
         id: createdExpense.id,
         groupId: createdExpense.groupId,
         description: createdExpense.description,
@@ -312,6 +316,8 @@ export class ExpensesService {
           percentage: s.percentage ? Number(s.percentage) : null,
         })),
       };
+      this.eventsGateway.emitExpenseCreated(result.groupId, result);
+      return result;
     });
   }
 
@@ -861,7 +867,7 @@ export class ExpensesService {
 
       if (!finalExpense) throw new Error('Expense update failed');
 
-      return {
+      const result = {
         id: finalExpense.id,
         groupId: finalExpense.groupId,
         description: finalExpense.description,
@@ -881,6 +887,8 @@ export class ExpensesService {
           percentage: s.percentage ? Number(s.percentage) : null,
         })),
       };
+      this.eventsGateway.emitExpenseUpdated(result.groupId, result);
+      return result;
     });
   }
 
@@ -918,6 +926,7 @@ export class ExpensesService {
         data: { deletedAt: new Date() },
       });
     });
+    this.eventsGateway.emitExpenseDeleted(groupId, expenseId);
   }
 
   private async reverseExpenseEffects(

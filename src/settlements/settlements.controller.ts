@@ -1,15 +1,11 @@
-import {
-  Controller,
-  Post,
-  Body,
-  Param,
-  UseGuards,
-  Req,
-} from '@nestjs/common';
+import { Controller, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
 import { SettlementsService } from './settlements.service';
 import { SettleUpDto } from './dto/settle-up.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
-import { SettleUpResponse, SettlementResponse } from './types/settle-up-responses.type';
+import {
+  SettleUpResponse,
+  SettlementResponse,
+} from './types/settle-up-responses.type';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   ApiTags,
@@ -44,7 +40,9 @@ export class SettlementsController {
   }
 
   @Post('settlements')
-  @ApiOperation({ summary: 'Create an individual settlement between two members' })
+  @ApiOperation({
+    summary: 'Create an individual settlement between two members',
+  })
   @ApiResponse({
     status: 201,
     description: 'Settlement created successfully.',

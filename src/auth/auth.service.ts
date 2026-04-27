@@ -1,4 +1,8 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
@@ -43,7 +47,12 @@ export class AuthService {
     });
 
     // Generate JWT token
-    const token = this.generateToken(user.id, user.email, user.name, user.avatarUrl);
+    const token = this.generateToken(
+      user.id,
+      user.email,
+      user.name,
+      user.avatarUrl,
+    );
 
     return {
       user: {
@@ -76,7 +85,12 @@ export class AuthService {
     }
 
     // Generate JWT token
-    const token = this.generateToken(user.id, user.email, user.name, user.avatarUrl);
+    const token = this.generateToken(
+      user.id,
+      user.email,
+      user.name,
+      user.avatarUrl,
+    );
 
     return {
       user: {
@@ -89,12 +103,17 @@ export class AuthService {
     };
   }
 
-  private generateToken(userId: string, email: string, name: string, picture?: string | null): string {
-    const payload = { 
-      sub: userId, 
+  private generateToken(
+    userId: string,
+    email: string,
+    name: string,
+    picture?: string | null,
+  ): string {
+    const payload = {
+      sub: userId,
       email,
       name,
-      picture: picture || null
+      picture: picture || null,
     };
     return this.jwtService.sign(payload);
   }

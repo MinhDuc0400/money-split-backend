@@ -10,10 +10,14 @@ import { UpdateGroupDto } from './dto/update-group.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
 import { Group, GroupMember, GroupRole } from '@prisma/client';
 import * as crypto from 'crypto';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class GroupsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventsGateway: EventsGateway,
+  ) {}
 
   async create(userId: string, createGroupDto: CreateGroupDto): Promise<Group> {
     return this.prisma.$transaction(async (tx) => {
@@ -151,10 +155,12 @@ export class GroupsService {
       throw new ForbiddenException('You do not have access to this group');
     }
 
-    return this.prisma.group.update({
+    const updated = await this.prisma.group.update({
       where: { id },
       data: updateGroupDto,
     });
+    this.eventsGateway.emitGroupUpdated(id, updated);
+    return updated;
   }
 
   async remove(id: string, userId: string): Promise<Group> {
@@ -222,7 +228,7 @@ export class GroupsService {
       where: { id: userId },
     });
 
-    return this.prisma.groupMember.create({
+    const member = await this.prisma.groupMember.create({
       data: {
         groupId: group.id,
         userId: userId,
@@ -231,5 +237,7 @@ export class GroupsService {
         role: GroupRole.MEMBER,
       },
     });
+    this.eventsGateway.emitMemberJoined(group.id, member);
+    return member;
   }
 }
