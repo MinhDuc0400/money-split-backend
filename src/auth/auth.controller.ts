@@ -1,4 +1,15 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, Get, UseGuards, Req, Res, Query } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Get,
+  UseGuards,
+  Req,
+  Res,
+  Query,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -41,7 +52,9 @@ export class AuthController {
   }
 
   @Get('google/mobile')
-  @ApiOperation({ summary: 'Initiate Google OAuth2 login for mobile (deep link redirect)' })
+  @ApiOperation({
+    summary: 'Initiate Google OAuth2 login for mobile (deep link redirect)',
+  })
   async googleAuthMobile(
     @Query('mobile_redirect') mobileRedirect: string,
     @Res() res: Response,
@@ -50,7 +63,9 @@ export class AuthController {
     const callbackURL =
       this.configService.get<string>('GOOGLE_CALLBACK_URL') ||
       'http://localhost:3000/auth/google/callback';
-    const state = Buffer.from(JSON.stringify({ mobileRedirect })).toString('base64');
+    const state = Buffer.from(JSON.stringify({ mobileRedirect })).toString(
+      'base64',
+    );
     const params = new URLSearchParams({
       client_id: clientId!,
       redirect_uri: callbackURL,
@@ -66,14 +81,20 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   @ApiOperation({ summary: 'Google OAuth2 callback' })
-  async googleAuthRedirect(@Req() req: Request, @Res() res: Response, @Query('state') state: string) {
+  async googleAuthRedirect(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('state') state: string,
+  ) {
     const { token } = req.user as any;
 
     // Decode mobile_redirect from state if present (set by /auth/google/mobile)
     let mobileRedirect: string | null = null;
     if (state) {
       try {
-        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+        const decoded = JSON.parse(
+          Buffer.from(state, 'base64').toString('utf8'),
+        );
         mobileRedirect = decoded.mobileRedirect || null;
       } catch {
         // ignore malformed state
@@ -84,7 +105,8 @@ export class AuthController {
       return res.redirect(`${mobileRedirect}?token=${token}`);
     }
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
     return res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
   }
 }
