@@ -8,10 +8,12 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
+import { PrismaService } from '../prisma/prisma.service';
 
 @WebSocketGateway({
-  cors: { origin: '*' }, // tighten in production
+  cors: { origin: process.env.FRONTEND_URL || 'http://localhost:5173' },
   namespace: '/events',
 })
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -20,13 +22,20 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(EventsGateway.name);
 
+  constructor(
+    private jwtService: JwtService,
+    private prisma: PrismaService,
+  ) {}
+
   handleConnection(client: Socket) {
     const token = client.handshake.auth?.token as string | undefined;
-    if (!token) {
-      this.logger.warn(`Client ${client.id} disconnected — no token`);
+    try {
+      const payload = this.jwtService.verify<{ sub: string }>(token ?? '');
+      client.data.userId = payload.sub;
+      this.logger.log(`Client connected: ${client.id} (user: ${payload.sub})`);
+    } catch {
+      this.logger.warn(`Client ${client.id} rejected — invalid token`);
       void client.disconnect();
-    } else {
-      this.logger.log(`Client connected: ${client.id}`);
     }
   }
 
@@ -36,10 +45,24 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /** Client joins a group room to receive group-scoped events */
   @SubscribeMessage('join_group')
-  handleJoinGroup(
+  async handleJoinGroup(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { groupId: string },
   ) {
+    const userId = client.data.userId as string | undefined;
+    if (!userId) return { error: 'unauthorized' };
+
+    const member = await this.prisma.groupMember.findFirst({
+      where: { groupId: payload.groupId, userId, deletedAt: null },
+    });
+
+    if (!member) {
+      this.logger.warn(
+        `Client ${client.id} denied join to group:${payload.groupId} — not a member`,
+      );
+      return { error: 'forbidden' };
+    }
+
     void client.join(`group:${payload.groupId}`);
     this.logger.log(`Client ${client.id} joined group:${payload.groupId}`);
     return { event: 'joined', data: payload.groupId };
