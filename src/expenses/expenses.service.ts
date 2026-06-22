@@ -507,91 +507,29 @@ export class ExpensesService {
       throw new ForbiddenException('You are not a member of this group');
     }
 
-    const debtsAsDebtor = await this.prisma.debt.findMany({
-      where: { groupId, debtorId: currentUserMember.id },
-      include: { creditor: true },
-    });
-
-    const debtsAsCreditor = await this.prisma.debt.findMany({
-      where: { groupId, creditorId: currentUserMember.id },
-      include: { debtor: true },
+    // Read from MemberBalance — the authoritative net balance per member,
+    // updated atomically by both expense creation and settlements.
+    // The Debt table tracks the payment graph but can drift from net balances
+    // when minimal-transfer settlements don't perfectly map to raw debt rows.
+    const memberBalances = await this.prisma.memberBalance.findMany({
+      where: { groupId, memberId: currentUserMember.id },
     });
 
     const response: UserBalanceResponse = { balances: {} };
 
-    // Temporary storage to aggregate by currency and member
-    const aggregation: {
-      [currency: string]: {
-        [memberId: string]: {
-          name: string;
-          avatarUrl: string | null;
-          netAmount: number;
-        };
-      };
-    } = {};
+    for (const mb of memberBalances) {
+      const net = Number(mb.balance);
+      if (Math.abs(net) < 0.001) continue;
 
-    // Process debts where user is the debtor (user owes others)
-    debtsAsDebtor.forEach((d) => {
-      const currency = d.currency;
-      if (!aggregation[currency]) aggregation[currency] = {};
+      const totalOwed = net > 0 ? net : 0;
+      const totalOwe = net < 0 ? Math.abs(net) : 0;
 
-      const mId = d.creditorId;
-      if (!aggregation[currency][mId]) {
-        aggregation[currency][mId] = {
-          name: d.creditor.name,
-          avatarUrl: d.creditor.avatarUrl,
-          netAmount: 0,
-        };
-      }
-      aggregation[currency][mId].netAmount -= Number(d.amount);
-    });
-
-    // Process debts where user is the creditor (others owe user)
-    debtsAsCreditor.forEach((d) => {
-      const currency = d.currency;
-      if (!aggregation[currency]) aggregation[currency] = {};
-
-      const mId = d.debtorId;
-      if (!aggregation[currency][mId]) {
-        aggregation[currency][mId] = {
-          name: d.debtor.name,
-          avatarUrl: d.debtor.avatarUrl,
-          netAmount: 0,
-        };
-      }
-      aggregation[currency][mId].netAmount += Number(d.amount);
-    });
-
-    // Build the response from aggregation
-    Object.keys(aggregation).forEach((currency) => {
-      let totalOwed = 0;
-      let totalOwe = 0;
-      const details: UserBalanceResponse['balances'][string]['details'] = [];
-
-      Object.keys(aggregation[currency]).forEach((mId) => {
-        const item = aggregation[currency][mId];
-        if (item.netAmount > 0) {
-          totalOwed += item.netAmount;
-        } else if (item.netAmount < 0) {
-          totalOwe += Math.abs(item.netAmount);
-        }
-
-        if (item.netAmount !== 0) {
-          details.push({
-            memberId: mId,
-            name: item.name,
-            avatarUrl: item.avatarUrl,
-            amount: item.netAmount,
-          });
-        }
-      });
-
-      response.balances[currency] = {
+      response.balances[mb.currency] = {
         totalOwed,
         totalOwe,
-        details,
+        details: [],
       };
-    });
+    }
 
     return response;
   }
