@@ -12,8 +12,15 @@ import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma/prisma.service';
 
+function getAllowedOrigins(): string | string[] | RegExp {
+  const frontendUrl = process.env.FRONTEND_URL;
+  if (frontendUrl) return frontendUrl;
+  // In development allow any localhost port
+  return /^http:\/\/localhost(:\d+)?$/;
+}
+
 @WebSocketGateway({
-  cors: { origin: process.env.FRONTEND_URL || 'http://localhost:5173' },
+  cors: { origin: getAllowedOrigins(), credentials: true },
   namespace: '/events',
 })
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -50,22 +57,37 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: { groupId: string },
   ) {
     const userId = client.data.userId as string | undefined;
-    if (!userId) return { error: 'unauthorized' };
-
-    const member = await this.prisma.groupMember.findFirst({
-      where: { groupId: payload.groupId, userId, deletedAt: null },
-    });
-
-    if (!member) {
-      this.logger.warn(
-        `Client ${client.id} denied join to group:${payload.groupId} — not a member`,
-      );
-      return { error: 'forbidden' };
+    if (!userId) {
+      this.logger.warn(`Client ${client.id} join_group rejected — no userId on socket`);
+      return { error: 'unauthorized' };
     }
 
-    void client.join(`group:${payload.groupId}`);
-    this.logger.log(`Client ${client.id} joined group:${payload.groupId}`);
-    return { event: 'joined', data: payload.groupId };
+    if (!payload?.groupId) {
+      this.logger.warn(`Client ${client.id} join_group rejected — missing groupId`);
+      return { error: 'bad_request' };
+    }
+
+    try {
+      const member = await this.prisma.groupMember.findFirst({
+        where: { groupId: payload.groupId, userId, deletedAt: null },
+      });
+
+      if (!member) {
+        this.logger.warn(
+          `Client ${client.id} denied join to group:${payload.groupId} — userId ${userId} not a member`,
+        );
+        return { error: 'forbidden' };
+      }
+
+      await client.join(`group:${payload.groupId}`);
+      this.logger.log(`Client ${client.id} (user:${userId}) joined group:${payload.groupId}`);
+      return { event: 'joined', data: payload.groupId };
+    } catch (err) {
+      this.logger.error(
+        `Client ${client.id} join_group error for group:${payload.groupId} — ${(err as Error).message}`,
+      );
+      return { error: 'internal' };
+    }
   }
 
   @SubscribeMessage('leave_group')
@@ -101,5 +123,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   emitGroupUpdated(groupId: string, group: unknown) {
     this.server.to(`group:${groupId}`).emit('group_updated', group);
+  }
+
+  emitMemberLeft(groupId: string, memberId: string) {
+    this.server.to(`group:${groupId}`).emit('member_left', { memberId, groupId });
   }
 }
