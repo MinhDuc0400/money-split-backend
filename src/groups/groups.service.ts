@@ -178,13 +178,61 @@ export class GroupsService {
       throw new ForbiddenException('Only the group owner can delete the group');
     }
 
-    // Soft delete
-    return this.prisma.group.update({
-      where: { id },
-      data: {
-        deletedAt: new Date(),
+    // All members must be settled before the group can be deleted
+    const unsettledBalances = await this.prisma.memberBalance.findMany({
+      where: {
+        groupId: id,
+        balance: { not: 0 },
+        member: { deletedAt: null },
       },
     });
+
+    if (unsettledBalances.length > 0) {
+      throw new ForbiddenException(
+        'All members must settle their balances before the group can be deleted',
+      );
+    }
+
+    const deleted = await this.prisma.group.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+    this.eventsGateway.emitGroupUpdated(id, { ...deleted, deleted: true });
+    return deleted;
+  }
+
+  async leave(groupId: string, userId: string): Promise<void> {
+    const member = await this.prisma.groupMember.findFirst({
+      where: { groupId, userId, deletedAt: null },
+    });
+
+    if (!member) {
+      throw new NotFoundException('You are not a member of this group');
+    }
+
+    if (member.role === GroupRole.OWNER) {
+      throw new ForbiddenException('Group owner cannot leave. Transfer ownership or delete the group.');
+    }
+
+    // Check if user has any unsettled balances in this group
+    const unsettledBalances = await this.prisma.memberBalance.findMany({
+      where: {
+        memberId: member.id,
+        groupId,
+        balance: { not: 0 },
+      },
+    });
+
+    if (unsettledBalances.length > 0) {
+      throw new ForbiddenException('You must settle all balances before leaving the group');
+    }
+
+    await this.prisma.groupMember.update({
+      where: { id: member.id },
+      data: { deletedAt: new Date() },
+    });
+
+    this.eventsGateway.emitMemberLeft(groupId, member.id);
   }
 
   async join(userId: string, joinGroupDto: JoinGroupDto): Promise<GroupMember> {

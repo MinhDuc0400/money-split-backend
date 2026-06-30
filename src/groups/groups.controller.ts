@@ -91,6 +91,16 @@ export class GroupsController {
     return this.groupsService.update(id, userId, updateGroupDto);
   }
 
+  @Delete(':id/leave')
+  @ApiOperation({ summary: 'Leave a group' })
+  @ApiResponse({ status: 200, description: 'Successfully left the group.' })
+  @ApiResponse({ status: 403, description: 'Unsettled balances or owner cannot leave.' })
+  @ApiResponse({ status: 404, description: 'Not a member.' })
+  leave(@Req() req: Request, @Param('id') id: string): Promise<void> {
+    const userId = req.user!.id;
+    return this.groupsService.leave(id, userId);
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a group' })
   @ApiResponse({
