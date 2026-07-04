@@ -17,6 +17,7 @@ import {
   UserBalanceResponse,
 } from './types/expense-responses.type';
 import { fromCents, toCents } from '../helpers/number.helper';
+import { updateDebtAtomic } from '../helpers/debt.helper';
 import { DebtFlow, ExpenseWithRelations } from './types/expense-internal.types';
 import { EventsGateway } from '../events/events.gateway';
 
@@ -928,7 +929,7 @@ export class ExpensesService {
     const flows = this.calculateDebtFlows(payers, splits);
     for (const flow of flows) {
       // To reverse, we act as if creditor owes debtor
-      await this.updateDebtAtomic(
+      await updateDebtAtomic(
         tx,
         groupId,
         flow.creditorId,
@@ -989,7 +990,7 @@ export class ExpensesService {
     // 2. Update Debts
     const flows = this.calculateDebtFlows(payers, splitData);
     for (const flow of flows) {
-      await this.updateDebtAtomic(
+      await updateDebtAtomic(
         tx,
         groupId,
         flow.debtorId,
@@ -997,72 +998,6 @@ export class ExpensesService {
         currency,
         flow.amountCents,
       );
-    }
-  }
-
-  private async updateDebtAtomic(
-    tx: Prisma.TransactionClient,
-    groupId: string,
-    debtorId: string,
-    creditorId: string,
-    currency: string,
-    amountCents: number,
-  ) {
-    // 1. Check if reverse debt (creditorId owes debtorId) exists
-    const reverseDebt = await tx.debt.findUnique({
-      where: {
-        groupId_debtorId_creditorId_currency: {
-          groupId,
-          debtorId: creditorId,
-          creditorId: debtorId,
-          currency,
-        },
-      },
-    });
-
-    let remainingNewDebtCents = amountCents;
-
-    if (reverseDebt) {
-      const reverseDebtCents = toCents(Number(reverseDebt.amount));
-      if (reverseDebtCents >= remainingNewDebtCents) {
-        const updatedReverseCents = reverseDebtCents - remainingNewDebtCents;
-        if (updatedReverseCents === 0) {
-          await tx.debt.delete({ where: { id: reverseDebt.id } });
-        } else {
-          await tx.debt.update({
-            where: { id: reverseDebt.id },
-            data: { amount: fromCents(updatedReverseCents) },
-          });
-        }
-        remainingNewDebtCents = 0;
-      } else {
-        await tx.debt.delete({ where: { id: reverseDebt.id } });
-        remainingNewDebtCents -= reverseDebtCents;
-      }
-    }
-
-    if (remainingNewDebtCents > 0) {
-      const amount = fromCents(remainingNewDebtCents);
-      await tx.debt.upsert({
-        where: {
-          groupId_debtorId_creditorId_currency: {
-            groupId,
-            debtorId,
-            creditorId,
-            currency,
-          },
-        },
-        create: {
-          groupId,
-          debtorId,
-          creditorId,
-          currency,
-          amount,
-        },
-        update: {
-          amount: { increment: amount },
-        },
-      });
     }
   }
 }

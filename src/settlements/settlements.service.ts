@@ -12,6 +12,7 @@ import {
 } from './types/settle-up-responses.type';
 import { Prisma, SettlementStatus } from '@prisma/client';
 import { toCents, fromCents } from '../helpers/number.helper';
+import { updateDebtAtomic } from '../helpers/debt.helper';
 import { calculateMinimalTransfers } from './settlement.algo';
 import { EventsGateway } from '../events/events.gateway';
 
@@ -146,12 +147,13 @@ export class SettlementsService {
     });
 
     // 3. Update Debt records (Reverse/Reduce debt)
-    // If fromId pays toId, we reduce the debt fromId owes to toId.
-    await this.updateDebtAtomic(
+    // If fromId pays toId, that's equivalent to toId now owing fromId
+    // the paid amount (netted against any existing fromId->toId debt).
+    await updateDebtAtomic(
       tx,
       groupId,
-      fromId,
       toId,
+      fromId,
       currency,
       toCents(amount),
     );
@@ -182,79 +184,6 @@ export class SettlementsService {
       note: settlement.note,
       createdAt: settlement.createdAt,
     };
-  }
-
-  private async updateDebtAtomic(
-    tx: Prisma.TransactionClient,
-    groupId: string,
-    debtorId: string,
-    creditorId: string,
-    currency: string,
-    amountCents: number,
-  ) {
-    // Logic: debtorId pays creditorId 'amountCents'.
-    // We should first reduce any existing debt where debtorId owes creditorId.
-    // If there's surplus payment, it creates a "reverse" debt (creditorId owes debtorId).
-
-    // 1. Check existing debt (debtorId owes creditorId)
-    const existingDebt = await tx.debt.findUnique({
-      where: {
-        groupId_debtorId_creditorId_currency: {
-          groupId,
-          debtorId,
-          creditorId,
-          currency,
-        },
-      },
-    });
-
-    let remainingPaymentCents = amountCents;
-
-    if (existingDebt) {
-      const existingDebtCents = toCents(Number(existingDebt.amount));
-      if (existingDebtCents >= remainingPaymentCents) {
-        // Payment is less than or equal to existing debt
-        const updatedDebtCents = existingDebtCents - remainingPaymentCents;
-        if (updatedDebtCents === 0) {
-          await tx.debt.delete({ where: { id: existingDebt.id } });
-        } else {
-          await tx.debt.update({
-            where: { id: existingDebt.id },
-            data: { amount: fromCents(updatedDebtCents) },
-          });
-        }
-        remainingPaymentCents = 0;
-      } else {
-        // Payment exceeds existing debt
-        await tx.debt.delete({ where: { id: existingDebt.id } });
-        remainingPaymentCents -= existingDebtCents;
-      }
-    }
-
-    if (remainingPaymentCents > 0) {
-      // Create/Increase reverse debt (creditorId owes debtorId)
-      const amount = fromCents(remainingPaymentCents);
-      await tx.debt.upsert({
-        where: {
-          groupId_debtorId_creditorId_currency: {
-            groupId,
-            debtorId: creditorId,
-            creditorId: debtorId,
-            currency,
-          },
-        },
-        create: {
-          groupId,
-          debtorId: creditorId,
-          creditorId: debtorId,
-          currency,
-          amount,
-        },
-        update: {
-          amount: { increment: amount },
-        },
-      });
-    }
   }
 
   async settleUp(
