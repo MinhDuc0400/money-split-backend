@@ -28,3 +28,6 @@ yarn-error.log*
 
 # Prisma
 # /prisma/migrations/ # Usually we want to keep migrations in git
+
+graphify-out/
+.claude/settings.local.json
