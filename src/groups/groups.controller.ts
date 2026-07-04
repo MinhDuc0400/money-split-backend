@@ -13,6 +13,7 @@ import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
+import { AddGuestDto } from './dto/add-guest.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   ApiTags,
@@ -114,5 +115,52 @@ export class GroupsController {
   remove(@Req() req: Request, @Param('id') id: string): Promise<Group> {
     const userId = req.user!.id;
     return this.groupsService.remove(id, userId);
+  }
+
+  @Post(':id/guests')
+  @ApiOperation({
+    summary: 'Add a guest participant (no account) to a group',
+  })
+  @ApiResponse({ status: 201, description: 'The guest has been added.' })
+  @ApiResponse({ status: 403, description: 'Not a member of this group.' })
+  addGuest(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() addGuestDto: AddGuestDto,
+  ): Promise<GroupMember> {
+    const userId = req.user!.id;
+    return this.groupsService.addGuest(id, userId, addGuestDto);
+  }
+
+  @Patch(':id/guests/:guestId')
+  @ApiOperation({ summary: 'Rename a guest participant' })
+  @ApiResponse({ status: 200, description: 'The guest has been renamed.' })
+  @ApiResponse({ status: 403, description: 'Not a member of this group.' })
+  @ApiResponse({ status: 404, description: 'Guest not found.' })
+  renameGuest(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('guestId') guestId: string,
+    @Body() addGuestDto: AddGuestDto,
+  ): Promise<GroupMember> {
+    const userId = req.user!.id;
+    return this.groupsService.renameGuest(id, userId, guestId, addGuestDto);
+  }
+
+  @Delete(':id/guests/:guestId')
+  @ApiOperation({ summary: 'Remove a guest participant' })
+  @ApiResponse({ status: 200, description: 'The guest has been removed.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Not a member of this group, or the guest has an unsettled balance.',
+  })
+  @ApiResponse({ status: 404, description: 'Guest not found.' })
+  removeGuest(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('guestId') guestId: string,
+  ): Promise<void> {
+    const userId = req.user!.id;
+    return this.groupsService.removeGuest(id, userId, guestId);
   }
 }

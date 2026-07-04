@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
+import { AddGuestDto } from './dto/add-guest.dto';
 import { Group, GroupMember, GroupRole } from '@prisma/client';
 import * as crypto from 'crypto';
 import { EventsGateway } from '../events/events.gateway';
@@ -305,5 +306,116 @@ export class GroupsService {
     });
     this.eventsGateway.emitMemberJoined(group.id, member);
     return member;
+  }
+
+  /** Throws ForbiddenException if userId isn't an active member of groupId. */
+  private async assertActiveMember(
+    groupId: string,
+    userId: string,
+  ): Promise<GroupMember> {
+    const member = await this.prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: {
+          groupId,
+          userId,
+        },
+      },
+    });
+
+    if (!member || member.deletedAt) {
+      throw new ForbiddenException('You do not have access to this group');
+    }
+
+    return member;
+  }
+
+  /**
+   * Adds a guest participant: a member with no User account, for people who
+   * won't sign in with Google but still need to be assigned expenses and
+   * tracked in balances/settlements. Any active member can add one.
+   */
+  async addGuest(
+    groupId: string,
+    userId: string,
+    dto: AddGuestDto,
+  ): Promise<GroupMember> {
+    await this.assertActiveMember(groupId, userId);
+
+    const guest = await this.prisma.groupMember.create({
+      data: {
+        groupId,
+        userId: null,
+        name: dto.name,
+        role: GroupRole.MEMBER,
+        isGuest: true,
+      },
+    });
+    this.eventsGateway.emitMemberJoined(groupId, guest);
+    return guest;
+  }
+
+  async renameGuest(
+    groupId: string,
+    userId: string,
+    guestId: string,
+    dto: AddGuestDto,
+  ): Promise<GroupMember> {
+    await this.assertActiveMember(groupId, userId);
+
+    const guest = await this.prisma.groupMember.findFirst({
+      where: { id: guestId, groupId, isGuest: true, deletedAt: null },
+    });
+
+    if (!guest) {
+      throw new NotFoundException('Guest not found in this group');
+    }
+
+    const updated = await this.prisma.groupMember.update({
+      where: { id: guestId },
+      data: { name: dto.name },
+    });
+    this.eventsGateway.emitMemberJoined(groupId, updated);
+    return updated;
+  }
+
+  async removeGuest(
+    groupId: string,
+    userId: string,
+    guestId: string,
+  ): Promise<void> {
+    await this.assertActiveMember(groupId, userId);
+
+    await this.prisma.$transaction(async (tx) => {
+      const guest = await tx.groupMember.findFirst({
+        where: { id: guestId, groupId, isGuest: true, deletedAt: null },
+      });
+
+      if (!guest) {
+        throw new NotFoundException('Guest not found in this group');
+      }
+
+      // Checked and applied in the same transaction so a concurrent
+      // expense/settlement can't slip in between the check and the write.
+      const unsettledBalances = await tx.memberBalance.findMany({
+        where: {
+          memberId: guest.id,
+          groupId,
+          balance: { not: 0 },
+        },
+      });
+
+      if (unsettledBalances.length > 0) {
+        throw new ForbiddenException(
+          'This guest has an unsettled balance. Settle up before removing them.',
+        );
+      }
+
+      await tx.groupMember.update({
+        where: { id: guestId },
+        data: { deletedAt: new Date() },
+      });
+    });
+
+    this.eventsGateway.emitMemberLeft(groupId, guestId);
   }
 }

@@ -116,6 +116,7 @@ model GroupMember {
   name      String
   avatarUrl String?  @map("avatar_url")
   role      GroupRole @default(MEMBER)
+  isGuest   Boolean  @default(false) @map("is_guest")
   joinedAt  DateTime @default(now()) @map("joined_at")
   deletedAt DateTime?
 
