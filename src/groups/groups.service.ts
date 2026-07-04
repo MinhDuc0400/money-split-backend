@@ -164,72 +164,82 @@ export class GroupsService {
   }
 
   async remove(id: string, userId: string): Promise<Group> {
-    // Only creator or OWNER can delete the group
-    const member = await this.prisma.groupMember.findUnique({
-      where: {
-        groupId_userId: {
-          groupId: id,
-          userId: userId,
+    const deleted = await this.prisma.$transaction(async (tx) => {
+      // Only creator or OWNER can delete the group
+      const member = await tx.groupMember.findUnique({
+        where: {
+          groupId_userId: {
+            groupId: id,
+            userId: userId,
+          },
         },
-      },
-    });
+      });
 
-    if (!member || member.role !== GroupRole.OWNER || member.deletedAt) {
-      throw new ForbiddenException('Only the group owner can delete the group');
-    }
+      if (!member || member.role !== GroupRole.OWNER || member.deletedAt) {
+        throw new ForbiddenException('Only the group owner can delete the group');
+      }
 
-    // All members must be settled before the group can be deleted
-    const unsettledBalances = await this.prisma.memberBalance.findMany({
-      where: {
-        groupId: id,
-        balance: { not: 0 },
-        member: { deletedAt: null },
-      },
-    });
+      // All members must be settled before the group can be deleted.
+      // Checked and applied in the same transaction so a concurrent
+      // expense/settlement can't slip in between the check and the write.
+      const unsettledBalances = await tx.memberBalance.findMany({
+        where: {
+          groupId: id,
+          balance: { not: 0 },
+          member: { deletedAt: null },
+        },
+      });
 
-    if (unsettledBalances.length > 0) {
-      throw new ForbiddenException(
-        'All members must settle their balances before the group can be deleted',
-      );
-    }
+      if (unsettledBalances.length > 0) {
+        throw new ForbiddenException(
+          'All members must settle their balances before the group can be deleted',
+        );
+      }
 
-    const deleted = await this.prisma.group.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+      return tx.group.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
     });
     this.eventsGateway.emitGroupUpdated(id, { ...deleted, deleted: true });
     return deleted;
   }
 
   async leave(groupId: string, userId: string): Promise<void> {
-    const member = await this.prisma.groupMember.findFirst({
-      where: { groupId, userId, deletedAt: null },
-    });
+    const member = await this.prisma.$transaction(async (tx) => {
+      const member = await tx.groupMember.findFirst({
+        where: { groupId, userId, deletedAt: null },
+      });
 
-    if (!member) {
-      throw new NotFoundException('You are not a member of this group');
-    }
+      if (!member) {
+        throw new NotFoundException('You are not a member of this group');
+      }
 
-    if (member.role === GroupRole.OWNER) {
-      throw new ForbiddenException('Group owner cannot leave. Transfer ownership or delete the group.');
-    }
+      if (member.role === GroupRole.OWNER) {
+        throw new ForbiddenException('Group owner cannot leave. Transfer ownership or delete the group.');
+      }
 
-    // Check if user has any unsettled balances in this group
-    const unsettledBalances = await this.prisma.memberBalance.findMany({
-      where: {
-        memberId: member.id,
-        groupId,
-        balance: { not: 0 },
-      },
-    });
+      // Check if user has any unsettled balances in this group.
+      // Checked and applied in the same transaction so a concurrent
+      // expense/settlement can't slip in between the check and the write.
+      const unsettledBalances = await tx.memberBalance.findMany({
+        where: {
+          memberId: member.id,
+          groupId,
+          balance: { not: 0 },
+        },
+      });
 
-    if (unsettledBalances.length > 0) {
-      throw new ForbiddenException('You must settle all balances before leaving the group');
-    }
+      if (unsettledBalances.length > 0) {
+        throw new ForbiddenException('You must settle all balances before leaving the group');
+      }
 
-    await this.prisma.groupMember.update({
-      where: { id: member.id },
-      data: { deletedAt: new Date() },
+      await tx.groupMember.update({
+        where: { id: member.id },
+        data: { deletedAt: new Date() },
+      });
+
+      return member;
     });
 
     this.eventsGateway.emitMemberLeft(groupId, member.id);
