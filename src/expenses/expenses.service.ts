@@ -18,7 +18,12 @@ import {
 } from './types/expense-responses.type';
 import { fromCents, toCents } from '../helpers/number.helper';
 import { updateDebtAtomic } from '../helpers/debt.helper';
-import { DebtFlow, ExpenseWithRelations } from './types/expense-internal.types';
+import {
+  DebtFlow,
+  ExpenseWithRelations,
+  SplitData,
+  SplitInput,
+} from './types/expense-internal.types';
 import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
@@ -107,6 +112,130 @@ export class ExpensesService {
     return flows;
   }
 
+  /** Throws BadRequestException if payer amounts don't sum to the expense total. */
+  private validatePayersTotal(
+    payers: { amount: number }[],
+    totalCents: number,
+    amount: number,
+  ) {
+    const payersTotalCents = payers.reduce(
+      (sum, p) => sum + toCents(p.amount),
+      0,
+    );
+    if (payersTotalCents !== totalCents) {
+      throw new BadRequestException(
+        `Total payers amount (${fromCents(payersTotalCents)}) must equal expense amount (${amount})`,
+      );
+    }
+  }
+
+  /**
+   * Computes per-member split amounts (in cents) for the given split type,
+   * validating the split-specific invariant (participants present, exact
+   * amounts sum to total, percentages sum to 100%, shares > 0). Shared by
+   * create() and updateExpense() since both accept the same split shape.
+   */
+  private calculateSplitData(
+    splitType: SplitType,
+    totalCents: number,
+    amount: number,
+    splits: SplitInput[],
+  ): SplitData[] {
+    const splitData: SplitData[] = [];
+
+    switch (splitType) {
+      case SplitType.EVEN: {
+        const participantIds = splits.map((s) => s.memberId);
+        if (participantIds.length === 0) {
+          throw new BadRequestException('At least one participant is required');
+        }
+
+        const cents = this.allocateByWeights(
+          new Array(participantIds.length).fill(1),
+          totalCents,
+        );
+        participantIds.forEach((memberId, i) => {
+          splitData.push({
+            memberId,
+            amountCents: cents[i],
+          });
+        });
+        break;
+      }
+
+      case SplitType.EXACT: {
+        const splitCentsSum = splits.reduce(
+          (sum, s) => sum + toCents(s.amount || 0),
+          0,
+        );
+        if (splitCentsSum !== totalCents) {
+          throw new BadRequestException(
+            `Exact split amounts must sum to ${amount}. Currently ${fromCents(splitCentsSum)}`,
+          );
+        }
+        splits.forEach((s) => {
+          splitData.push({
+            memberId: s.memberId,
+            amountCents: toCents(s.amount || 0),
+          });
+        });
+        break;
+      }
+
+      case SplitType.PERCENTAGE: {
+        const percentages = splits.map((s) => s.percentage || 0);
+        const percentSum = percentages.reduce((a, b) => a + b, 0);
+
+        // We use Math.round(percentSum * 100) to check if it's 100% (with 2 decimal precision for percentages)
+        if (Math.round(percentSum * 100) !== 10000) {
+          throw new BadRequestException(
+            `Percentages must sum to 100%. Currently ${percentSum}%`,
+          );
+        }
+
+        const cents = this.allocateByWeights(percentages, totalCents);
+        splits.forEach((s, i) => {
+          splitData.push({
+            memberId: s.memberId,
+            amountCents: cents[i],
+            percentage: s.percentage,
+          });
+        });
+        break;
+      }
+
+      case SplitType.SHARES: {
+        const shares = splits.map((s) => s.share || 0);
+        const totalShares = shares.reduce((a, b) => a + b, 0);
+
+        if (totalShares <= 0) {
+          throw new BadRequestException('Total shares must be greater than 0');
+        }
+
+        const cents = this.allocateByWeights(shares, totalCents);
+        splits.forEach((s, i) => {
+          splitData.push({
+            memberId: s.memberId,
+            amountCents: cents[i],
+            share: s.share,
+          });
+        });
+        break;
+      }
+    }
+
+    // Invariant check
+    const totalSplitCents = splitData.reduce(
+      (sum, s) => sum + s.amountCents,
+      0,
+    );
+    if (totalSplitCents !== totalCents) {
+      throw new Error('Internal Invariant Violation: Split sum mismatch');
+    }
+
+    return splitData;
+  }
+
   /** Throws ForbiddenException if userId isn't an active member of groupId. */
   private async assertActiveMember(groupId: string, userId: string) {
     const member = await this.prisma.groupMember.findUnique({
@@ -135,114 +264,15 @@ export class ExpensesService {
 
     // 2. Validate payers total using integer cents
     const totalCents = toCents(dto.amount);
-    const payersTotalCents = dto.payers.reduce(
-      (sum, p) => sum + toCents(p.amount),
-      0,
-    );
-
-    if (payersTotalCents !== totalCents) {
-      throw new BadRequestException(
-        `Total payers amount (${fromCents(payersTotalCents)}) must equal expense amount (${dto.amount})`,
-      );
-    }
+    this.validatePayersTotal(dto.payers, totalCents, dto.amount);
 
     // 3. Calculate splits in integer cents
-    const splitData: {
-      memberId: string;
-      amountCents: number;
-      share?: number;
-      percentage?: number;
-    }[] = [];
-
-    switch (dto.splitType) {
-      case SplitType.EVEN: {
-        const participantIds = dto.splits.map((s) => s.memberId);
-        if (participantIds.length === 0) {
-          throw new BadRequestException('At least one participant is required');
-        }
-
-        const cents = this.allocateByWeights(
-          new Array(participantIds.length).fill(1),
-          totalCents,
-        );
-        participantIds.forEach((memberId, i) => {
-          splitData.push({
-            memberId,
-            amountCents: cents[i],
-          });
-        });
-        break;
-      }
-
-      case SplitType.EXACT: {
-        const splitCentsSum = dto.splits.reduce(
-          (sum, s) => sum + toCents(s.amount || 0),
-          0,
-        );
-        if (splitCentsSum !== totalCents) {
-          throw new BadRequestException(
-            `Exact split amounts must sum to ${dto.amount}. Currently ${fromCents(splitCentsSum)}`,
-          );
-        }
-        dto.splits.forEach((s) => {
-          splitData.push({
-            memberId: s.memberId,
-            amountCents: toCents(s.amount || 0),
-          });
-        });
-        break;
-      }
-
-      case SplitType.PERCENTAGE: {
-        const percentages = dto.splits.map((s) => s.percentage || 0);
-        const percentSum = percentages.reduce((a, b) => a + b, 0);
-
-        // We use Math.round(percentSum * 100) to check if it's 100% (with 2 decimal precision for percentages)
-        if (Math.round(percentSum * 100) !== 10000) {
-          throw new BadRequestException(
-            `Percentages must sum to 100%. Currently ${percentSum}%`,
-          );
-        }
-
-        const cents = this.allocateByWeights(percentages, totalCents);
-        dto.splits.forEach((s, i) => {
-          splitData.push({
-            memberId: s.memberId,
-            amountCents: cents[i],
-            percentage: s.percentage,
-          });
-        });
-        break;
-      }
-
-      case SplitType.SHARES: {
-        const shares = dto.splits.map((s) => s.share || 0);
-        const totalShares = shares.reduce((a, b) => a + b, 0);
-
-        if (totalShares <= 0) {
-          throw new BadRequestException('Total shares must be greater than 0');
-        }
-
-        const cents = this.allocateByWeights(shares, totalCents);
-        dto.splits.forEach((s, i) => {
-          splitData.push({
-            memberId: s.memberId,
-            amountCents: cents[i],
-            share: s.share,
-          });
-        });
-        break;
-      }
-    }
-
-    // Invariant check
-    const totalSplitCents = splitData.reduce(
-      (sum, s) => sum + s.amountCents,
-      0,
+    const splitData = this.calculateSplitData(
+      dto.splitType,
+      totalCents,
+      dto.amount,
+      dto.splits,
     );
-    if (totalSplitCents !== totalCents) {
-      throw new Error('Internal Invariant Violation: Split sum mismatch');
-    }
 
     return this.prisma.$transaction(async (tx) => {
       // 4. Create the expense
@@ -637,100 +667,13 @@ export class ExpensesService {
 
     // Re-validate payers and calculate new splits
     const totalCents = toCents(amount);
-    const payersTotalCents = payers.reduce(
-      (sum: number, p: { amount: number }) => sum + toCents(p.amount),
-      0,
+    this.validatePayersTotal(payers, totalCents, amount);
+    const splitData = this.calculateSplitData(
+      splitType,
+      totalCents,
+      amount,
+      splits,
     );
-    if (payersTotalCents !== totalCents) {
-      throw new BadRequestException(
-        `Total payers amount (${fromCents(payersTotalCents)}) must equal expense amount (${amount})`,
-      );
-    }
-
-    const splitData: {
-      memberId: string;
-      amountCents: number;
-      share?: number;
-      percentage?: number;
-    }[] = [];
-
-    switch (splitType) {
-      case SplitType.EVEN: {
-        const participantIds = splits.map(
-          (s: { memberId: string }) => s.memberId,
-        );
-        if (participantIds.length === 0) {
-          throw new BadRequestException('At least one participant is required');
-        }
-        const cents = this.allocateByWeights(
-          new Array(participantIds.length).fill(1),
-          totalCents,
-        );
-        participantIds.forEach((memberId: string, i: number) => {
-          splitData.push({ memberId, amountCents: cents[i] });
-        });
-        break;
-      }
-      case SplitType.EXACT: {
-        const splitCentsSum = splits.reduce(
-          (sum: number, s: { amount?: number }) => sum + toCents(s.amount || 0),
-          0,
-        );
-        if (splitCentsSum !== totalCents) {
-          throw new BadRequestException(
-            `Exact split amounts must sum to ${amount}. Currently ${fromCents(splitCentsSum)}`,
-          );
-        }
-        splits.forEach((s: { memberId: string; amount?: number }) => {
-          splitData.push({
-            memberId: s.memberId,
-            amountCents: toCents(s.amount || 0),
-          });
-        });
-        break;
-      }
-      case SplitType.PERCENTAGE: {
-        const percentages = splits.map(
-          (s: { percentage?: number }) => s.percentage || 0,
-        );
-        const percentSum = percentages.reduce(
-          (a: number, b: number) => a + b,
-          0,
-        );
-        if (Math.round(percentSum * 100) !== 10000) {
-          throw new BadRequestException(
-            `Percentages must sum to 100%. Currently ${percentSum}%`,
-          );
-        }
-        const cents = this.allocateByWeights(percentages, totalCents);
-        splits.forEach(
-          (s: { memberId: string; percentage?: number }, i: number) => {
-            splitData.push({
-              memberId: s.memberId,
-              amountCents: cents[i],
-              percentage: s.percentage,
-            });
-          },
-        );
-        break;
-      }
-      case SplitType.SHARES: {
-        const shares = splits.map((s: { share?: number }) => s.share || 0);
-        const totalShares = shares.reduce((a: number, b: number) => a + b, 0);
-        if (totalShares <= 0) {
-          throw new BadRequestException('Total shares must be greater than 0');
-        }
-        const cents = this.allocateByWeights(shares, totalCents);
-        splits.forEach((s: { memberId: string; share?: number }, i: number) => {
-          splitData.push({
-            memberId: s.memberId,
-            amountCents: cents[i],
-            share: s.share,
-          });
-        });
-        break;
-      }
-    }
 
     return this.prisma.$transaction(async (tx) => {
       // 3. REVERSE old effects
