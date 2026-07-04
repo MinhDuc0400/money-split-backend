@@ -95,8 +95,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { groupId: string },
   ) {
+    if (!payload?.groupId) {
+      this.logger.warn(`Client ${client.id} leave_group rejected — missing groupId`);
+      return { error: 'bad_request' };
+    }
+
     void client.leave(`group:${payload.groupId}`);
     this.logger.log(`Client ${client.id} left group:${payload.groupId}`);
+    return;
   }
 
   // ── Emit helpers called by services ──────────────────────────────
