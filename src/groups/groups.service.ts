@@ -43,12 +43,16 @@ export class GroupsService {
         where: { id: userId },
       });
 
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
       await tx.groupMember.create({
         data: {
           groupId: group.id,
           userId: userId,
-          name: user?.name || 'Unknown',
-          avatarUrl: user?.avatarUrl,
+          name: user.name,
+          avatarUrl: user.avatarUrl,
           role: GroupRole.OWNER,
         },
       });
@@ -286,12 +290,16 @@ export class GroupsService {
       where: { id: userId },
     });
 
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     const member = await this.prisma.groupMember.create({
       data: {
         groupId: group.id,
         userId: userId,
-        name: user?.name || 'Unknown',
-        avatarUrl: user?.avatarUrl,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
         role: GroupRole.MEMBER,
       },
     });
