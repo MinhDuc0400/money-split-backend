@@ -59,10 +59,10 @@ export class SettlementsService {
         fromMember.groupId !== groupId ||
         fromMember.deletedAt
       ) {
-        throw new BadRequestException('Payer is not a member of this group');
+        throw new ForbiddenException('Payer is not a member of this group');
       }
       if (!toMember || toMember.groupId !== groupId || toMember.deletedAt) {
-        throw new BadRequestException('Receiver is not a member of this group');
+        throw new ForbiddenException('Receiver is not a member of this group');
       }
 
       // 3. Apply the settlement using internal logic
