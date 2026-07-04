@@ -107,12 +107,8 @@ export class ExpensesService {
     return flows;
   }
 
-  async create(
-    groupId: string,
-    userId: string,
-    dto: CreateExpenseDto,
-  ): Promise<ExpenseResponse> {
-    // 1. Verify group membership
+  /** Throws ForbiddenException if userId isn't an active member of groupId. */
+  private async assertActiveMember(groupId: string, userId: string) {
     const member = await this.prisma.groupMember.findUnique({
       where: {
         groupId_userId: {
@@ -125,6 +121,17 @@ export class ExpensesService {
     if (!member || member.deletedAt) {
       throw new ForbiddenException('You are not a member of this group');
     }
+
+    return member;
+  }
+
+  async create(
+    groupId: string,
+    userId: string,
+    dto: CreateExpenseDto,
+  ): Promise<ExpenseResponse> {
+    // 1. Verify group membership
+    await this.assertActiveMember(groupId, userId);
 
     // 2. Validate payers total using integer cents
     const totalCents = toCents(dto.amount);
@@ -327,18 +334,7 @@ export class ExpensesService {
     userId: string,
   ): Promise<GroupedTransactionHistory> {
     // Verify membership
-    const member = await this.prisma.groupMember.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId,
-        },
-      },
-    });
-
-    if (!member || member.deletedAt) {
-      throw new ForbiddenException('You do not have access to this group');
-    }
+    await this.assertActiveMember(groupId, userId);
 
     const [expenses, settlements] = await Promise.all([
       this.prisma.expense.findMany({
@@ -432,18 +428,7 @@ export class ExpensesService {
     userId: string,
   ): Promise<BalancesByCurrency> {
     // Verify membership
-    const member = await this.prisma.groupMember.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId,
-        },
-      },
-    });
-
-    if (!member || member.deletedAt) {
-      throw new ForbiddenException('You do not have access to this group');
-    }
+    await this.assertActiveMember(groupId, userId);
 
     const members = await this.prisma.groupMember.findMany({
       where: { groupId, deletedAt: null },
@@ -627,12 +612,7 @@ export class ExpensesService {
     dto: UpdateExpenseDto,
   ): Promise<ExpenseResponse> {
     // 1. Verify membership and authorization
-    const member = await this.prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId, userId } },
-    });
-    if (!member || member.deletedAt) {
-      throw new ForbiddenException('You are not a member of this group');
-    }
+    await this.assertActiveMember(groupId, userId);
 
     // 2. Fetch old expense
     const oldExpense = await this.prisma.expense.findUnique({
@@ -836,12 +816,7 @@ export class ExpensesService {
     expenseId: string,
     userId: string,
   ): Promise<void> {
-    const member = await this.prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId, userId } },
-    });
-    if (!member || member.deletedAt) {
-      throw new ForbiddenException('You are not a member of this group');
-    }
+    await this.assertActiveMember(groupId, userId);
 
     const expense = await this.prisma.expense.findUnique({
       where: { id: expenseId, groupId, deletedAt: null },
