@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { SettlementsService } from './settlements.service';
+import { SettleAllDto } from './dto/settle-all.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../events/events.gateway';
 import { SettlementStatus } from '@prisma/client';
@@ -290,6 +293,69 @@ describe('SettlementsService', () => {
       });
     });
 
+    it('throws ForbiddenException if fromId does not correspond to a real, non-deleted group member', async () => {
+      mockPrisma.groupMember.findUnique.mockImplementation(({ where }) => {
+        // Caller membership check (by groupId_userId compound key).
+        if (where.groupId_userId) {
+          return Promise.resolve({
+            id: 'member-1',
+            groupId,
+            userId,
+            deletedAt: null,
+          });
+        }
+        // fromId lookup: not found. toId lookup: valid member.
+        if (where.id === fromId) return Promise.resolve(null);
+        if (where.id === toId)
+          return Promise.resolve({ id: toId, groupId, deletedAt: null });
+        return Promise.resolve(null);
+      });
+
+      await expect(
+        service.settleAll(
+          groupId,
+          userId,
+          { fromId, toId, items: [{ currency: 'USD', amount: 30 }] },
+          'key-bad-from',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.memberBalance.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.settlement.create).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException if toId corresponds to a soft-deleted group member', async () => {
+      mockPrisma.groupMember.findUnique.mockImplementation(({ where }) => {
+        if (where.groupId_userId) {
+          return Promise.resolve({
+            id: 'member-1',
+            groupId,
+            userId,
+            deletedAt: null,
+          });
+        }
+        if (where.id === fromId)
+          return Promise.resolve({ id: fromId, groupId, deletedAt: null });
+        if (where.id === toId)
+          return Promise.resolve({
+            id: toId,
+            groupId,
+            deletedAt: new Date(),
+          });
+        return Promise.resolve(null);
+      });
+
+      await expect(
+        service.settleAll(
+          groupId,
+          userId,
+          { fromId, toId, items: [{ currency: 'USD', amount: 30 }] },
+          'key-bad-to',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.memberBalance.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.settlement.create).not.toHaveBeenCalled();
+    });
+
     it('throws BadRequestException if a currency amount no longer matches the current balance', async () => {
       // Current state: fromId owes toId exactly $20 in USD (not $30 as the client sent).
       mockPrisma.memberBalance.findMany.mockResolvedValueOnce([
@@ -401,6 +467,24 @@ describe('SettlementsService', () => {
 
       expect(result.settlements).toHaveLength(2);
       expect(mockPrisma.settlement.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects an empty items array via DTO validation (@ArrayMinSize)', async () => {
+      const dto = plainToInstance(SettleAllDto, {
+        fromId,
+        toId,
+        items: [],
+      });
+
+      const errors = await validate(dto);
+
+      const itemsError = errors.find((e) => e.property === 'items');
+      expect(itemsError).toBeDefined();
+      expect(itemsError?.constraints).toEqual(
+        expect.objectContaining({
+          arrayMinSize: 'At least one item is required',
+        }),
+      );
     });
   });
 });

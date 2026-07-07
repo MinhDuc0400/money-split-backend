@@ -308,7 +308,27 @@ export class SettlementsService {
       userId,
       'POST /groups/:id/settlements/settle-all',
       async (tx) => {
-        // 2. Reject the whole batch up-front if the client sent the same
+        // 2. Verify both members exist in the group (abort the whole batch
+        // up-front, consistent with createSettlement's validation).
+        const [fromMember, toMember] = await Promise.all([
+          tx.groupMember.findUnique({ where: { id: fromId } }),
+          tx.groupMember.findUnique({ where: { id: toId } }),
+        ]);
+
+        if (
+          !fromMember ||
+          fromMember.groupId !== groupId ||
+          fromMember.deletedAt
+        ) {
+          throw new ForbiddenException('Payer is not a member of this group');
+        }
+        if (!toMember || toMember.groupId !== groupId || toMember.deletedAt) {
+          throw new ForbiddenException(
+            'Receiver is not a member of this group',
+          );
+        }
+
+        // 3. Reject the whole batch up-front if the client sent the same
         // currency more than once - applying it twice would double-settle
         // the same debt in a single request.
         const currencies = [...new Set(items.map((i) => i.currency))];
@@ -318,7 +338,7 @@ export class SettlementsService {
           );
         }
 
-        // 3. Fetch current balances for exactly the claimed currencies
+        // 4. Fetch current balances for exactly the claimed currencies
         const balances = await tx.memberBalance.findMany({
           where: {
             groupId,
@@ -330,7 +350,7 @@ export class SettlementsService {
           },
         });
 
-        // 4. Validate every (currency, amount) pair against the current
+        // 5. Validate every (currency, amount) pair against the current
         // computed balance BEFORE applying any of them. If any single
         // currency no longer matches, abort the whole batch.
         const validated: Array<{ currency: string; amountCents: number }> =
@@ -370,7 +390,7 @@ export class SettlementsService {
           });
         }
 
-        // 5. Only now, after every currency has been validated, apply each
+        // 6. Only now, after every currency has been validated, apply each
         // settlement using the EXACT existing amount (never rounded or
         // converted).
         const createdSettlements: SettlementResponse[] = [];

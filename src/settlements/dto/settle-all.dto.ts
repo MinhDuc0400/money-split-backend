@@ -2,6 +2,7 @@ import {
   IsString,
   IsUUID,
   IsArray,
+  ArrayMinSize,
   ValidateNested,
   IsNumber,
   Min,
@@ -35,6 +36,7 @@ export class SettleAllDto {
       'Exact (currency, amount) pairs the client displayed and wants to settle in one batch. The server validates each against current balances before executing.',
   })
   @IsArray()
+  @ArrayMinSize(1, { message: 'At least one item is required' })
   @ValidateNested({ each: true })
   @Type(() => SettleAllItemDto)
   items: SettleAllItemDto[];
