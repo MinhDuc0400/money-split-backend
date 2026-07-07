@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CachedRates {
@@ -87,5 +88,17 @@ export class ExchangeRatesService {
       rates,
       stale,
     };
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async handleDailyRefresh() {
+    try {
+      await this.refreshRates('USD');
+      this.logger.log('Exchange rates refreshed successfully');
+    } catch (err) {
+      this.logger.error(
+        `Exchange rate refresh failed: ${(err as Error).message}`,
+      );
+    }
   }
 }
