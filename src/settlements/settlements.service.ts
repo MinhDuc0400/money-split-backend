@@ -308,8 +308,17 @@ export class SettlementsService {
       userId,
       'POST /groups/:id/settlements/settle-all',
       async (tx) => {
-        // 2. Fetch current balances for exactly the claimed currencies
+        // 2. Reject the whole batch up-front if the client sent the same
+        // currency more than once - applying it twice would double-settle
+        // the same debt in a single request.
         const currencies = [...new Set(items.map((i) => i.currency))];
+        if (currencies.length !== items.length) {
+          throw new BadRequestException(
+            'Duplicate currency in settle-all request',
+          );
+        }
+
+        // 3. Fetch current balances for exactly the claimed currencies
         const balances = await tx.memberBalance.findMany({
           where: {
             groupId,
@@ -321,7 +330,7 @@ export class SettlementsService {
           },
         });
 
-        // 3. Validate every (currency, amount) pair against the current
+        // 4. Validate every (currency, amount) pair against the current
         // computed balance BEFORE applying any of them. If any single
         // currency no longer matches, abort the whole batch.
         const validated: Array<{ currency: string; amountCents: number }> =
@@ -361,7 +370,7 @@ export class SettlementsService {
           });
         }
 
-        // 4. Only now, after every currency has been validated, apply each
+        // 5. Only now, after every currency has been validated, apply each
         // settlement using the EXACT existing amount (never rounded or
         // converted).
         const createdSettlements: SettlementResponse[] = [];

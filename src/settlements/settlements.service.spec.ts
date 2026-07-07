@@ -323,6 +323,54 @@ describe('SettlementsService', () => {
       expect(mockPrisma.settlement.create).not.toHaveBeenCalled();
     });
 
+    it('aborts the whole batch without applying anything when an earlier item is valid but a later item fails', async () => {
+      // USD (first item) currently matches exactly what the client sent, so
+      // it would pass validation on its own. GBP (second item) has no
+      // matching balance/transfer for this pair, so the batch must abort
+      // before USD is ever applied.
+      mockPrisma.memberBalance.findMany.mockResolvedValueOnce([
+        { memberId: fromId, balance: -30, currency: 'USD', member: { name: 'A', avatarUrl: null } },
+        { memberId: toId, balance: 30, currency: 'USD', member: { name: 'B', avatarUrl: null } },
+      ]);
+
+      await expect(
+        service.settleAll(
+          groupId,
+          userId,
+          {
+            fromId,
+            toId,
+            items: [
+              { currency: 'USD', amount: 30 },
+              { currency: 'GBP', amount: 61.5 },
+            ],
+          },
+          'key-4',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.settlement.create).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException if items contains a duplicate currency', async () => {
+      await expect(
+        service.settleAll(
+          groupId,
+          userId,
+          {
+            fromId,
+            toId,
+            items: [
+              { currency: 'USD', amount: 30 },
+              { currency: 'USD', amount: 30 },
+            ],
+          },
+          'key-5',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.memberBalance.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.settlement.create).not.toHaveBeenCalled();
+    });
+
     it('settles every validated currency in one batch when all items match', async () => {
       mockPrisma.memberBalance.findMany.mockResolvedValueOnce([
         { memberId: fromId, balance: -30, currency: 'USD', member: { name: 'A', avatarUrl: null } },
