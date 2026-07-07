@@ -2,6 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ExpensesService } from './expenses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../events/events.gateway';
+import { withIdempotency } from '../helpers/idempotency.helper';
+import { SplitType } from '@prisma/client';
+
+jest.mock('../helpers/idempotency.helper');
+const mockWithIdempotency = withIdempotency as jest.MockedFunction<
+  typeof withIdempotency
+>;
 
 describe('ExpensesService', () => {
   let service: ExpensesService;
@@ -9,6 +16,7 @@ describe('ExpensesService', () => {
   const mockPrisma = {
     groupMember: {
       findMany: jest.fn(),
+      findUnique: jest.fn(),
     },
     memberBalance: {
       findMany: jest.fn(),
@@ -76,6 +84,62 @@ describe('ExpensesService', () => {
         totalOwe: 0,
         details: [],
       });
+    });
+  });
+
+  describe('create (idempotency wiring)', () => {
+    const groupId = 'group-1';
+    const userId = 'user-1';
+    const dto = {
+      description: 'Lunch',
+      amount: 20,
+      splitType: SplitType.EVEN,
+      payers: [{ memberId: 'member-1', amount: 20 }],
+      splits: [
+        { memberId: 'member-1', amount: 10 },
+        { memberId: 'member-2', amount: 10 },
+      ],
+    };
+
+    beforeEach(() => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+        userId,
+        deletedAt: null,
+      });
+    });
+
+    it('passes the idempotency key through to withIdempotency and returns its result', async () => {
+      const sentinel = { id: 'expense-1' };
+      mockWithIdempotency.mockResolvedValueOnce(sentinel as never);
+
+      const result = await service.create(groupId, userId, dto, 'key-abc');
+
+      expect(result).toBe(sentinel);
+      expect(mockWithIdempotency).toHaveBeenCalledWith(
+        mockPrisma,
+        'key-abc',
+        userId,
+        'POST /groups/:id/expenses',
+        expect.any(Function),
+      );
+    });
+
+    it('still works when no idempotency key is provided', async () => {
+      const sentinel = { id: 'expense-2' };
+      mockWithIdempotency.mockResolvedValueOnce(sentinel as never);
+
+      const result = await service.create(groupId, userId, dto);
+
+      expect(result).toBe(sentinel);
+      expect(mockWithIdempotency).toHaveBeenCalledWith(
+        mockPrisma,
+        undefined,
+        userId,
+        'POST /groups/:id/expenses',
+        expect.any(Function),
+      );
     });
   });
 });

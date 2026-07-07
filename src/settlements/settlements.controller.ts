@@ -1,4 +1,12 @@
-import { Controller, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Param,
+  Headers,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { SettlementsService } from './settlements.service';
 import { SettleUpDto } from './dto/settle-up.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
@@ -34,9 +42,15 @@ export class SettlementsController {
     @Param('groupId') groupId: string,
     @Req() req: Request,
     @Body() settleUpDto: SettleUpDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<SettleUpResponse> {
     const userId = req.user!.id;
-    return this.settlementsService.settleUp(groupId, userId, settleUpDto);
+    return this.settlementsService.settleUp(
+      groupId,
+      userId,
+      settleUpDto,
+      idempotencyKey,
+    );
   }
 
   @Post('settlements')
@@ -53,8 +67,14 @@ export class SettlementsController {
     @Param('groupId') groupId: string,
     @Req() req: Request,
     @Body() dto: CreateSettlementDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<SettlementResponse> {
     const userId = req.user!.id;
-    return this.settlementsService.createSettlement(groupId, userId, dto);
+    return this.settlementsService.createSettlement(
+      groupId,
+      userId,
+      dto,
+      idempotencyKey,
+    );
   }
 }

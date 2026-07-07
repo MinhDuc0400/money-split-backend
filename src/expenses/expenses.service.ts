@@ -18,6 +18,7 @@ import {
 } from './types/expense-responses.type';
 import { fromCents, toCents } from '../helpers/number.helper';
 import { updateDebtAtomic } from '../helpers/debt.helper';
+import { withIdempotency } from '../helpers/idempotency.helper';
 import {
   DebtFlow,
   ExpenseWithRelations,
@@ -258,6 +259,7 @@ export class ExpensesService {
     groupId: string,
     userId: string,
     dto: CreateExpenseDto,
+    idempotencyKey?: string,
   ): Promise<ExpenseResponse> {
     // 1. Verify group membership
     await this.assertActiveMember(groupId, userId);
@@ -274,89 +276,95 @@ export class ExpensesService {
       dto.splits,
     );
 
-    return this.prisma.$transaction(async (tx) => {
-      // 4. Create the expense
-      const expense = await tx.expense.create({
-        data: {
-          groupId,
-          description: dto.description,
-          amount: dto.amount,
-          splitType: dto.splitType,
-          currency: dto.currency || 'USD',
-          date: dto.date || new Date(),
-        },
-      });
-
-      // 5. Create payers
-      await tx.expensePayer.createMany({
-        data: dto.payers.map((p) => ({
-          expenseId: expense.id,
-          memberId: p.memberId,
-          amount: p.amount,
-        })),
-      });
-
-      // 6. Create splits
-      await tx.expenseSplit.createMany({
-        data: splitData.map((s) => ({
-          expenseId: expense.id,
-          memberId: s.memberId,
-          amount: fromCents(s.amountCents),
-          share: s.share,
-          percentage: s.percentage,
-        })),
-      });
-
-      const currency = dto.currency || 'USD';
-
-      // 7. Update MemberBalances & Debts
-      await this.applyExpenseEffects(
-        tx,
-        groupId,
-        currency,
-        dto.payers,
-        splitData,
-      );
-
-      const createdExpense = await tx.expense.findUnique({
-        where: { id: expense.id },
-        include: {
-          payers: {
-            include: {
-              member: true,
-            },
+    return withIdempotency(
+      this.prisma,
+      idempotencyKey,
+      userId,
+      'POST /groups/:id/expenses',
+      async (tx) => {
+        // 4. Create the expense
+        const expense = await tx.expense.create({
+          data: {
+            groupId,
+            description: dto.description,
+            amount: dto.amount,
+            splitType: dto.splitType,
+            currency: dto.currency || 'USD',
+            date: dto.date || new Date(),
           },
-          splits: true,
-        },
-      });
+        });
 
-      if (!createdExpense) {
-        throw new Error('Expense creation failed');
-      }
+        // 5. Create payers
+        await tx.expensePayer.createMany({
+          data: dto.payers.map((p) => ({
+            expenseId: expense.id,
+            memberId: p.memberId,
+            amount: p.amount,
+          })),
+        });
 
-      const result = {
-        id: createdExpense.id,
-        groupId: createdExpense.groupId,
-        description: createdExpense.description,
-        amount: Number(createdExpense.amount),
-        splitType: createdExpense.splitType,
-        currency: createdExpense.currency,
-        date: createdExpense.date,
-        payers: createdExpense.payers.map((p) => ({
-          memberId: p.memberId,
-          amount: Number(p.amount),
-          name: p.member.name,
-        })),
-        splits: createdExpense.splits.map((s) => ({
-          memberId: s.memberId,
-          amount: Number(s.amount),
-          share: s.share ? Number(s.share) : null,
-          percentage: s.percentage ? Number(s.percentage) : null,
-        })),
-      };
-      this.eventsGateway.emitExpenseCreated(result.groupId, result);
-      return result;
-    });
+        // 6. Create splits
+        await tx.expenseSplit.createMany({
+          data: splitData.map((s) => ({
+            expenseId: expense.id,
+            memberId: s.memberId,
+            amount: fromCents(s.amountCents),
+            share: s.share,
+            percentage: s.percentage,
+          })),
+        });
+
+        const currency = dto.currency || 'USD';
+
+        // 7. Update MemberBalances & Debts
+        await this.applyExpenseEffects(
+          tx,
+          groupId,
+          currency,
+          dto.payers,
+          splitData,
+        );
+
+        const createdExpense = await tx.expense.findUnique({
+          where: { id: expense.id },
+          include: {
+            payers: {
+              include: {
+                member: true,
+              },
+            },
+            splits: true,
+          },
+        });
+
+        if (!createdExpense) {
+          throw new Error('Expense creation failed');
+        }
+
+        const result = {
+          id: createdExpense.id,
+          groupId: createdExpense.groupId,
+          description: createdExpense.description,
+          amount: Number(createdExpense.amount),
+          splitType: createdExpense.splitType,
+          currency: createdExpense.currency,
+          date: createdExpense.date,
+          payers: createdExpense.payers.map((p) => ({
+            memberId: p.memberId,
+            amount: Number(p.amount),
+            name: p.member.name,
+          })),
+          splits: createdExpense.splits.map((s) => ({
+            memberId: s.memberId,
+            amount: Number(s.amount),
+            share: s.share ? Number(s.share) : null,
+            percentage: s.percentage ? Number(s.percentage) : null,
+          })),
+        };
+        this.eventsGateway.emitExpenseCreated(result.groupId, result);
+        return result;
+      },
+    );
   }
 
   async getGroupTransactions(

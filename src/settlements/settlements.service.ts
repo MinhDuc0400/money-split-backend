@@ -13,6 +13,7 @@ import {
 import { Prisma, SettlementStatus } from '@prisma/client';
 import { toCents, fromCents } from '../helpers/number.helper';
 import { updateDebtAtomic } from '../helpers/debt.helper';
+import { withIdempotency } from '../helpers/idempotency.helper';
 import { calculateMinimalTransfers } from './settlement.algo';
 import { EventsGateway } from '../events/events.gateway';
 
@@ -27,6 +28,7 @@ export class SettlementsService {
     groupId: string,
     userId: string,
     dto: CreateSettlementDto,
+    idempotencyKey?: string,
   ): Promise<SettlementResponse> {
     // 1. Verify group membership of the calling user
     const caller = await this.prisma.groupMember.findUnique({
@@ -48,39 +50,47 @@ export class SettlementsService {
       throw new BadRequestException('Cannot settle with yourself');
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      // 2. Verify both members exist in the group
-      const [fromMember, toMember] = await Promise.all([
-        tx.groupMember.findUnique({ where: { id: fromId } }),
-        tx.groupMember.findUnique({ where: { id: toId } }),
-      ]);
+    return withIdempotency(
+      this.prisma,
+      idempotencyKey,
+      userId,
+      'POST /groups/:id/settlements',
+      async (tx) => {
+        // 2. Verify both members exist in the group
+        const [fromMember, toMember] = await Promise.all([
+          tx.groupMember.findUnique({ where: { id: fromId } }),
+          tx.groupMember.findUnique({ where: { id: toId } }),
+        ]);
 
-      if (
-        !fromMember ||
-        fromMember.groupId !== groupId ||
-        fromMember.deletedAt
-      ) {
-        throw new ForbiddenException('Payer is not a member of this group');
-      }
-      if (!toMember || toMember.groupId !== groupId || toMember.deletedAt) {
-        throw new ForbiddenException('Receiver is not a member of this group');
-      }
+        if (
+          !fromMember ||
+          fromMember.groupId !== groupId ||
+          fromMember.deletedAt
+        ) {
+          throw new ForbiddenException('Payer is not a member of this group');
+        }
+        if (!toMember || toMember.groupId !== groupId || toMember.deletedAt) {
+          throw new ForbiddenException(
+            'Receiver is not a member of this group',
+          );
+        }
 
-      // 3. Apply the settlement using internal logic
-      const settlement = await this.applySettlementInternal(
-        tx,
-        groupId,
-        fromId,
-        toId,
-        amount,
-        currency,
-        note,
-      );
+        // 3. Apply the settlement using internal logic
+        const settlement = await this.applySettlementInternal(
+          tx,
+          groupId,
+          fromId,
+          toId,
+          amount,
+          currency,
+          note,
+        );
 
-      const result = this.mapSettlementResponse(settlement);
-      this.eventsGateway.emitSettlementUpdated(groupId, result);
-      return result;
-    });
+        const result = this.mapSettlementResponse(settlement);
+        this.eventsGateway.emitSettlementUpdated(groupId, result);
+        return result;
+      },
+    );
   }
 
   private async applySettlementInternal(
@@ -190,6 +200,7 @@ export class SettlementsService {
     groupId: string,
     userId: string,
     dto: SettleUpDto,
+    idempotencyKey?: string,
   ): Promise<SettleUpResponse> {
     // 1. Verify group membership
     const member = await this.prisma.groupMember.findUnique({
@@ -207,58 +218,64 @@ export class SettlementsService {
 
     const { currency } = dto;
 
-    return this.prisma.$transaction(async (tx) => {
-      // 2. Fetch all non-zero balances
-      const balances = await tx.memberBalance.findMany({
-        where: {
-          groupId,
-          currency: currency || undefined,
-          balance: { not: 0 },
-        },
-        include: {
-          member: true,
-        },
-      });
-
-      if (balances.length === 0) {
-        return { settlements: [] };
-      }
-
-      const createdSettlements: SettlementResponse[] = [];
-      const currencies = [...new Set(balances.map((b) => b.currency))];
-
-      for (const curr of currencies) {
-        const currBalances = balances.filter((b) => b.currency === curr);
-
-        // 3. Build BalanceInput (CENTS, immutable)
-        const balanceInputs = currBalances.map((b) => ({
-          memberId: b.memberId,
-          amountCents: toCents(Number(b.balance)),
-        }));
-
-        // 4. Calculate minimal transfers (PURE function)
-        const transfers = calculateMinimalTransfers(balanceInputs);
-
-        // 5. Apply each transfer via internal settlement logic
-        for (const t of transfers) {
-          const settlement = await this.applySettlementInternal(
-            tx,
+    return withIdempotency(
+      this.prisma,
+      idempotencyKey,
+      userId,
+      'POST /groups/:id/settle-up',
+      async (tx) => {
+        // 2. Fetch all non-zero balances
+        const balances = await tx.memberBalance.findMany({
+          where: {
             groupId,
-            t.fromId,
-            t.toId,
-            fromCents(t.amountCents),
-            curr,
-            'Automatic Settle Up',
-          );
+            currency: currency || undefined,
+            balance: { not: 0 },
+          },
+          include: {
+            member: true,
+          },
+        });
 
-          createdSettlements.push(this.mapSettlementResponse(settlement));
+        if (balances.length === 0) {
+          return { settlements: [] };
         }
-      }
 
-      for (const s of createdSettlements) {
-        this.eventsGateway.emitSettlementUpdated(groupId, s);
-      }
-      return { settlements: createdSettlements };
-    });
+        const createdSettlements: SettlementResponse[] = [];
+        const currencies = [...new Set(balances.map((b) => b.currency))];
+
+        for (const curr of currencies) {
+          const currBalances = balances.filter((b) => b.currency === curr);
+
+          // 3. Build BalanceInput (CENTS, immutable)
+          const balanceInputs = currBalances.map((b) => ({
+            memberId: b.memberId,
+            amountCents: toCents(Number(b.balance)),
+          }));
+
+          // 4. Calculate minimal transfers (PURE function)
+          const transfers = calculateMinimalTransfers(balanceInputs);
+
+          // 5. Apply each transfer via internal settlement logic
+          for (const t of transfers) {
+            const settlement = await this.applySettlementInternal(
+              tx,
+              groupId,
+              t.fromId,
+              t.toId,
+              fromCents(t.amountCents),
+              curr,
+              'Automatic Settle Up',
+            );
+
+            createdSettlements.push(this.mapSettlementResponse(settlement));
+          }
+        }
+
+        for (const s of createdSettlements) {
+          this.eventsGateway.emitSettlementUpdated(groupId, s);
+        }
+        return { settlements: createdSettlements };
+      },
+    );
   }
 }

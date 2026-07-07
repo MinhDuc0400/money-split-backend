@@ -220,3 +220,21 @@ model Settlement {
   @@index([toId])
   @@map("settlements")
 }
+
+/* -------------------- IDEMPOTENCY -------------------- */
+
+// Claims a client-supplied Idempotency-Key so a retried or double-submitted
+// request (network timeout, double-click) replays the original response
+// instead of re-executing the mutation. statusCode 0 means "claimed, still
+// in flight" - a genuine value is written once the wrapped operation
+// completes.
+model IdempotencyKey {
+  key          String   @id
+  userId       String   @map("user_id")
+  endpoint     String
+  statusCode   Int      @map("status_code")
+  responseBody Json?    @map("response_body")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("idempotency_keys")
+}

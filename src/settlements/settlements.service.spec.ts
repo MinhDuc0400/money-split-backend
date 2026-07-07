@@ -1,8 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { SettlementsService } from './settlements.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsGateway } from '../events/events.gateway';
 import { SettlementStatus } from '@prisma/client';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
+import { withIdempotency } from '../helpers/idempotency.helper';
+
+jest.mock('../helpers/idempotency.helper');
+const mockWithIdempotency = withIdempotency as jest.MockedFunction<
+  typeof withIdempotency
+>;
 
 describe('SettlementsService', () => {
   let service: SettlementsService;
@@ -30,6 +37,10 @@ describe('SettlementsService', () => {
     $transaction: jest.fn((cb) => cb(mockPrisma)),
   };
 
+  const mockEventsGateway = {
+    emitSettlementUpdated: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -38,11 +49,22 @@ describe('SettlementsService', () => {
           provide: PrismaService,
           useValue: mockPrisma,
         },
+        {
+          provide: EventsGateway,
+          useValue: mockEventsGateway,
+        },
       ],
     }).compile();
 
     service = module.get<SettlementsService>(SettlementsService);
     prisma = module.get<PrismaService>(PrismaService);
+
+    // Default passthrough: real withIdempotency behavior for tests that
+    // don't care about idempotency specifically, so the wrapped fn still runs.
+    mockWithIdempotency.mockImplementation(
+      (_prisma, _key, _userId, _endpoint, fn) =>
+        mockPrisma.$transaction(fn as never),
+    );
   });
 
   afterEach(() => {
@@ -97,6 +119,32 @@ describe('SettlementsService', () => {
       expect(mockPrisma.settlement.create).toHaveBeenCalled();
       expect(mockPrisma.memberBalance.upsert).toHaveBeenCalledTimes(2);
       expect(mockPrisma.debt.findUnique).toHaveBeenCalled();
+    });
+
+    it('passes the idempotency key through to withIdempotency and returns its result', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+      });
+      const sentinel = { id: 'settlement-1' };
+      mockWithIdempotency.mockReset();
+      mockWithIdempotency.mockResolvedValueOnce(sentinel as never);
+
+      const result = await service.createSettlement(
+        groupId,
+        userId,
+        dto,
+        'key-abc',
+      );
+
+      expect(result).toBe(sentinel);
+      expect(mockWithIdempotency).toHaveBeenCalledWith(
+        mockPrisma,
+        'key-abc',
+        userId,
+        'POST /groups/:id/settlements',
+        expect.any(Function),
+      );
     });
   });
 
@@ -198,6 +246,32 @@ describe('SettlementsService', () => {
         0,
       );
       expect(totalSettled).toBe(15);
+    });
+
+    it('passes the idempotency key through to withIdempotency and returns its result', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+      });
+      const sentinel = { settlements: [] };
+      mockWithIdempotency.mockReset();
+      mockWithIdempotency.mockResolvedValueOnce(sentinel as never);
+
+      const result = await service.settleUp(
+        groupId,
+        userId,
+        { currency: 'USD' },
+        'key-xyz',
+      );
+
+      expect(result).toBe(sentinel);
+      expect(mockWithIdempotency).toHaveBeenCalledWith(
+        mockPrisma,
+        'key-xyz',
+        userId,
+        'POST /groups/:id/settle-up',
+        expect.any(Function),
+      );
     });
   });
 });

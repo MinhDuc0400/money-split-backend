@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Headers,
   UseGuards,
   Req,
 } from '@nestjs/common';
@@ -44,9 +45,15 @@ export class ExpensesController {
     @Param('groupId') groupId: string,
     @Req() req: Request,
     @Body() createExpenseDto: CreateExpenseDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<ExpenseResponse> {
     const userId = req.user!.id;
-    return this.expensesService.create(groupId, userId, createExpenseDto);
+    return this.expensesService.create(
+      groupId,
+      userId,
+      createExpenseDto,
+      idempotencyKey,
+    );
   }
 
   @Patch('expenses/:expenseId')
