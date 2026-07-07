@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettleUpDto } from './dto/settle-up.dto';
+import { SettleAllDto } from './dto/settle-all.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import {
   SettleUpResponse,
@@ -274,6 +275,115 @@ export class SettlementsService {
         for (const s of createdSettlements) {
           this.eventsGateway.emitSettlementUpdated(groupId, s);
         }
+        return { settlements: createdSettlements };
+      },
+    );
+  }
+
+  async settleAll(
+    groupId: string,
+    userId: string,
+    dto: SettleAllDto,
+    idempotencyKey?: string,
+  ): Promise<SettleUpResponse> {
+    // 1. Verify group membership
+    const member = await this.prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: {
+          groupId,
+          userId,
+        },
+      },
+    });
+
+    if (!member || member.deletedAt) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const { fromId, toId, items } = dto;
+
+    return withIdempotency(
+      this.prisma,
+      idempotencyKey,
+      userId,
+      'POST /groups/:id/settlements/settle-all',
+      async (tx) => {
+        // 2. Fetch current balances for exactly the claimed currencies
+        const currencies = [...new Set(items.map((i) => i.currency))];
+        const balances = await tx.memberBalance.findMany({
+          where: {
+            groupId,
+            currency: { in: currencies },
+            balance: { not: 0 },
+          },
+          include: {
+            member: true,
+          },
+        });
+
+        // 3. Validate every (currency, amount) pair against the current
+        // computed balance BEFORE applying any of them. If any single
+        // currency no longer matches, abort the whole batch.
+        const validated: Array<{ currency: string; amountCents: number }> =
+          [];
+
+        for (const item of items) {
+          const currBalances = balances.filter(
+            (b) => b.currency === item.currency,
+          );
+
+          const balanceInputs = currBalances.map((b) => ({
+            memberId: b.memberId,
+            amountCents: toCents(Number(b.balance)),
+          }));
+
+          const transfers = calculateMinimalTransfers(balanceInputs);
+          const matchingTransfer = transfers.find(
+            (t) => t.fromId === fromId && t.toId === toId,
+          );
+
+          if (!matchingTransfer) {
+            throw new BadRequestException(
+              `No current ${item.currency} balance to settle between these members. Your balances changed - refresh and try again.`,
+            );
+          }
+
+          const currentAmount = fromCents(matchingTransfer.amountCents);
+          if (Math.abs(currentAmount - item.amount) > 0.005) {
+            throw new BadRequestException(
+              `The ${item.currency} amount changed. Your balances changed - refresh and try again.`,
+            );
+          }
+
+          validated.push({
+            currency: item.currency,
+            amountCents: matchingTransfer.amountCents,
+          });
+        }
+
+        // 4. Only now, after every currency has been validated, apply each
+        // settlement using the EXACT existing amount (never rounded or
+        // converted).
+        const createdSettlements: SettlementResponse[] = [];
+
+        for (const { currency, amountCents } of validated) {
+          const settlement = await this.applySettlementInternal(
+            tx,
+            groupId,
+            fromId,
+            toId,
+            fromCents(amountCents),
+            currency,
+            'Settle All',
+          );
+
+          createdSettlements.push(this.mapSettlementResponse(settlement));
+        }
+
+        for (const s of createdSettlements) {
+          this.eventsGateway.emitSettlementUpdated(groupId, s);
+        }
+
         return { settlements: createdSettlements };
       },
     );
