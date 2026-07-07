@@ -535,11 +535,13 @@ export class ExpensesService {
 
     for (const mb of memberBalances) {
       const net = Number(mb.balance);
-      if (Math.abs(net) < 0.001) continue;
-
       const totalOwed = net > 0 ? net : 0;
       const totalOwe = net < 0 ? Math.abs(net) : 0;
 
+      // Report every currency the member has a balance row for, including
+      // an exact 0/0 (fully settled). Omitting settled currencies makes
+      // this response indistinguishable from "not fetched yet" to callers
+      // that check for an empty object as a loading proxy.
       response.balances[mb.currency] = {
         totalOwed,
         totalOwe,
