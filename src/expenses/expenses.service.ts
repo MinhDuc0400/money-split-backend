@@ -426,11 +426,11 @@ export class ExpensesService {
       ...settlements.map((s) => ({
         id: s.id,
         type: 'SETTLEMENT' as const,
+        description: s.note || `${s.from.name} paid ${s.to.name}`,
         amount: Number(s.amount),
         currency: s.currency,
         date: s.createdAt,
         status: s.status,
-
         from: {
           memberId: s.fromId,
           name: s.from.name,
