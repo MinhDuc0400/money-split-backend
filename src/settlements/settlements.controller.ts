@@ -12,6 +12,7 @@ import { SettlementsService } from './settlements.service';
 import { SettleUpDto } from './dto/settle-up.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import { SettleAllDto } from './dto/settle-all.dto';
+import { SettleGuestDto } from './dto/settle-guest.dto';
 import {
   SettleUpResponse,
   SettlementResponse,
@@ -113,5 +114,20 @@ export class SettlementsController {
       dto,
       idempotencyKey,
     );
+  }
+
+  @Post('settle-guest')
+  @ApiOperation({ summary: 'Mark a guest member debt as received (creditor confirms cash collected)' })
+  @ApiResponse({ status: 201, description: 'Guest debt marked as received, balance updated.' })
+  @ApiResponse({ status: 400, description: 'Guest has no debt in this currency, or invalid guest.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  settleGuest(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+    @Body() dto: SettleGuestDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<SettleUpResponse> {
+    const userId = req.user!.id;
+    return this.settlementsService.settleGuest(groupId, userId, dto, idempotencyKey);
   }
 }
