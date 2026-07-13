@@ -238,3 +238,21 @@ model IdempotencyKey {
 
   @@map("idempotency_keys")
 }
+
+/* -------------------- EXCHANGE RATES -------------------- */
+
+// Daily-cached exchange rates. One row per (baseCurrency, targetCurrency, date).
+// Populated only by the scheduled fetch job in ExchangeRatesService - never
+// written to from a request handler.
+model ExchangeRate {
+  id             String   @id @default(uuid())
+  baseCurrency   String   @map("base_currency")
+  targetCurrency String   @map("target_currency")
+  rate           Decimal  @db.Decimal(18, 8)
+  date           DateTime @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([baseCurrency, targetCurrency, date])
+  @@index([baseCurrency, date])
+  @@map("exchange_rates")
+}

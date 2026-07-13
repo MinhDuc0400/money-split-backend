@@ -6,10 +6,12 @@ import {
   Headers,
   UseGuards,
   Req,
+  BadRequestException,
 } from '@nestjs/common';
 import { SettlementsService } from './settlements.service';
 import { SettleUpDto } from './dto/settle-up.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
+import { SettleAllDto } from './dto/settle-all.dto';
 import {
   SettleUpResponse,
   SettlementResponse,
@@ -71,6 +73,41 @@ export class SettlementsController {
   ): Promise<SettlementResponse> {
     const userId = req.user!.id;
     return this.settlementsService.createSettlement(
+      groupId,
+      userId,
+      dto,
+      idempotencyKey,
+    );
+  }
+
+  @Post('settlements/settle-all')
+  @ApiOperation({
+    summary:
+      'Settle every currency a specific pair of members owe each other in one batch',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'All matched currencies settled successfully.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Missing Idempotency-Key header, or balances changed since the client last fetched them.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  settleAll(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+    @Body() dto: SettleAllDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<SettleUpResponse> {
+    if (!idempotencyKey) {
+      throw new BadRequestException(
+        'Idempotency-Key header is required for this endpoint',
+      );
+    }
+    const userId = req.user!.id;
+    return this.settlementsService.settleAll(
       groupId,
       userId,
       dto,

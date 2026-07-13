@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettleUpDto } from './dto/settle-up.dto';
+import { SettleAllDto } from './dto/settle-all.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import {
   SettleUpResponse,
@@ -274,6 +275,144 @@ export class SettlementsService {
         for (const s of createdSettlements) {
           this.eventsGateway.emitSettlementUpdated(groupId, s);
         }
+        return { settlements: createdSettlements };
+      },
+    );
+  }
+
+  async settleAll(
+    groupId: string,
+    userId: string,
+    dto: SettleAllDto,
+    idempotencyKey?: string,
+  ): Promise<SettleUpResponse> {
+    // 1. Verify group membership
+    const member = await this.prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: {
+          groupId,
+          userId,
+        },
+      },
+    });
+
+    if (!member || member.deletedAt) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const { fromId, toId, items } = dto;
+
+    return withIdempotency(
+      this.prisma,
+      idempotencyKey,
+      userId,
+      'POST /groups/:id/settlements/settle-all',
+      async (tx) => {
+        // 2. Verify both members exist in the group (abort the whole batch
+        // up-front, consistent with createSettlement's validation).
+        const [fromMember, toMember] = await Promise.all([
+          tx.groupMember.findUnique({ where: { id: fromId } }),
+          tx.groupMember.findUnique({ where: { id: toId } }),
+        ]);
+
+        if (
+          !fromMember ||
+          fromMember.groupId !== groupId ||
+          fromMember.deletedAt
+        ) {
+          throw new ForbiddenException('Payer is not a member of this group');
+        }
+        if (!toMember || toMember.groupId !== groupId || toMember.deletedAt) {
+          throw new ForbiddenException(
+            'Receiver is not a member of this group',
+          );
+        }
+
+        // 3. Reject the whole batch up-front if the client sent the same
+        // currency more than once - applying it twice would double-settle
+        // the same debt in a single request.
+        const currencies = [...new Set(items.map((i) => i.currency))];
+        if (currencies.length !== items.length) {
+          throw new BadRequestException(
+            'Duplicate currency in settle-all request',
+          );
+        }
+
+        // 4. Fetch current balances for exactly the claimed currencies
+        const balances = await tx.memberBalance.findMany({
+          where: {
+            groupId,
+            currency: { in: currencies },
+            balance: { not: 0 },
+          },
+          include: {
+            member: true,
+          },
+        });
+
+        // 5. Validate every (currency, amount) pair against the current
+        // computed balance BEFORE applying any of them. If any single
+        // currency no longer matches, abort the whole batch.
+        const validated: Array<{ currency: string; amountCents: number }> =
+          [];
+
+        for (const item of items) {
+          const currBalances = balances.filter(
+            (b) => b.currency === item.currency,
+          );
+
+          const balanceInputs = currBalances.map((b) => ({
+            memberId: b.memberId,
+            amountCents: toCents(Number(b.balance)),
+          }));
+
+          const transfers = calculateMinimalTransfers(balanceInputs);
+          const matchingTransfer = transfers.find(
+            (t) => t.fromId === fromId && t.toId === toId,
+          );
+
+          if (!matchingTransfer) {
+            throw new BadRequestException(
+              `No current ${item.currency} balance to settle between these members. Your balances changed - refresh and try again.`,
+            );
+          }
+
+          const currentAmount = fromCents(matchingTransfer.amountCents);
+          if (Math.abs(currentAmount - item.amount) > 0.005) {
+            throw new BadRequestException(
+              `The ${item.currency} amount changed. Your balances changed - refresh and try again.`,
+            );
+          }
+
+          validated.push({
+            currency: item.currency,
+            amountCents: matchingTransfer.amountCents,
+          });
+        }
+
+        // 6. Only now, after every currency has been validated, apply each
+        // settlement using the EXACT existing amount (never rounded or
+        // converted).
+        const createdSettlements: SettlementResponse[] = [];
+
+        for (const { currency, amountCents } of validated) {
+          const settlement = await this.applySettlementInternal(
+            tx,
+            groupId,
+            fromId,
+            toId,
+            fromCents(amountCents),
+            currency,
+            'Settle All',
+          );
+
+          createdSettlements.push(this.mapSettlementResponse(settlement));
+        }
+
+        for (const s of createdSettlements) {
+          this.eventsGateway.emitSettlementUpdated(groupId, s);
+        }
+
         return { settlements: createdSettlements };
       },
     );
