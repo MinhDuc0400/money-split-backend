@@ -9,6 +9,7 @@ import {
   Headers,
   UseGuards,
   Req,
+  Query,
 } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
@@ -23,7 +24,7 @@ import {
 import {
   BalancesByCurrency,
   ExpenseResponse,
-  GroupedTransactionHistory,
+  PaginatedTransactionHistory,
   RecommendedSettlement,
   UserBalanceResponse,
 } from './types/expense-responses.type';
@@ -96,9 +97,12 @@ export class ExpensesController {
   getTransactions(
     @Param('groupId') groupId: string,
     @Req() req: Request,
-  ): Promise<GroupedTransactionHistory> {
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ): Promise<PaginatedTransactionHistory> {
     const userId = req.user!.id;
-    return this.expensesService.getGroupTransactions(groupId, userId);
+    const parsedLimit = limit ? Math.min(parseInt(limit, 10) || 20, 50) : 20;
+    return this.expensesService.getGroupTransactions(groupId, userId, parsedLimit, cursor);
   }
 
   @Get('balances')
