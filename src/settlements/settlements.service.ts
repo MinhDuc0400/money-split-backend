@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { SettleUpDto } from './dto/settle-up.dto';
 import { SettleAllDto } from './dto/settle-all.dto';
+import { SettleGuestDto } from './dto/settle-guest.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import {
   SettleUpResponse,
@@ -414,6 +415,74 @@ export class SettlementsService {
         }
 
         return { settlements: createdSettlements };
+      },
+    );
+  }
+
+  async settleGuest(
+    groupId: string,
+    userId: string,
+    dto: SettleGuestDto,
+    idempotencyKey?: string,
+  ): Promise<SettleUpResponse> {
+    const caller = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!caller || caller.deletedAt) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const { guestMemberId, currency, amount } = dto;
+
+    return withIdempotency(
+      this.prisma,
+      idempotencyKey,
+      userId,
+      'POST /groups/:id/settle-guest',
+      async (tx) => {
+        const guestMember = await tx.groupMember.findUnique({
+          where: { id: guestMemberId },
+        });
+        const isGuest = (guestMember as unknown as { isGuest: boolean } | null)?.isGuest;
+        if (
+          !guestMember ||
+          guestMember.groupId !== groupId ||
+          guestMember.deletedAt ||
+          !isGuest
+        ) {
+          throw new BadRequestException(
+            'Guest member not found or not a guest in this group',
+          );
+        }
+
+        const guestBalance = await tx.memberBalance.findUnique({
+          where: {
+            groupId_memberId_currency: { groupId, memberId: guestMemberId, currency },
+          },
+        });
+
+        const balanceValue = guestBalance ? Number(guestBalance.balance) : 0;
+        if (balanceValue >= 0) {
+          throw new BadRequestException(
+            'Guest has no outstanding debt in this currency',
+          );
+        }
+
+        const cappedAmount = Math.min(amount, Math.abs(balanceValue));
+
+        const settlement = await this.applySettlementInternal(
+          tx,
+          groupId,
+          guestMemberId,
+          caller.id,
+          cappedAmount,
+          currency,
+          `Received from ${guestMember.name}`,
+        );
+
+        const result = this.mapSettlementResponse(settlement);
+        this.eventsGateway.emitSettlementUpdated(groupId, result);
+        return { settlements: [result] };
       },
     );
   }
