@@ -11,7 +11,7 @@ import { Prisma, SplitType } from '@prisma/client';
 import {
   BalancesByCurrency,
   ExpenseResponse,
-  GroupedTransactionHistory,
+  PaginatedTransactionHistory,
   RecommendedSettlement,
   TransactionHistoryItem,
   UserBalanceResponse,
@@ -370,95 +370,118 @@ export class ExpensesService {
   async getGroupTransactions(
     groupId: string,
     userId: string,
-  ): Promise<GroupedTransactionHistory> {
-    // Verify membership
+    limit = 20,
+    cursor?: string,
+  ): Promise<PaginatedTransactionHistory> {
     await this.assertActiveMember(groupId, userId);
+
+    const effectiveLimit = Math.min(limit, 50);
+
+    // Decode cursor
+    let cursorDate: Date | null = null;
+    let cursorId: string | null = null;
+    if (cursor) {
+      try {
+        const decoded = JSON.parse(
+          Buffer.from(cursor, 'base64').toString('utf-8'),
+        ) as { date: string; id: string };
+        cursorDate = new Date(decoded.date);
+        cursorId = decoded.id;
+      } catch {
+        // malformed cursor — treat as first page
+      }
+    }
+
+    const expenseDateFilter = cursorDate
+      ? {
+          OR: [
+            { date: { lt: cursorDate } },
+            { date: { equals: cursorDate }, id: { gt: cursorId! } },
+          ],
+        }
+      : {};
+
+    const settlementDateFilter = cursorDate
+      ? {
+          OR: [
+            { createdAt: { lt: cursorDate } },
+            { createdAt: { equals: cursorDate }, id: { gt: cursorId! } },
+          ],
+        }
+      : {};
+
+    const fetchCount = effectiveLimit + 1;
 
     const [expenses, settlements] = await Promise.all([
       this.prisma.expense.findMany({
-        where: { groupId, deletedAt: null },
+        where: { groupId, deletedAt: null, ...expenseDateFilter },
         include: {
-          payers: {
-            include: {
-              member: true,
-            },
-          },
-          splits: {
-            include: {
-              member: true,
-            },
-          },
+          payers: { include: { member: true } },
+          splits: { include: { member: true } },
         },
-        orderBy: { date: 'desc' },
+        orderBy: [{ date: 'desc' }, { id: 'asc' }],
+        take: fetchCount,
       }),
       this.prisma.settlement.findMany({
-        where: { groupId, deletedAt: null },
-        include: {
-          from: true,
-          to: true,
-        },
-        orderBy: { createdAt: 'desc' },
+        where: { groupId, deletedAt: null, ...settlementDateFilter },
+        include: { from: true, to: true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        take: fetchCount,
       }),
     ]);
 
-    // Combine and sort
-    const transactions: TransactionHistoryItem[] = [
-      ...expenses.map((e) => ({
-        id: e.id,
-        type: 'EXPENSE' as const,
-        description: e.description,
-        amount: Number(e.amount),
-        currency: e.currency,
-        date: e.date,
-        payers: e.payers.map((p) => ({
-          memberId: p.memberId,
-          amount: Number(p.amount),
-          name: p.member.name,
-          avatarUrl: p.member.avatarUrl,
-        })),
-        receivers: e.splits.map((s) => ({
-          memberId: s.memberId,
-          amount: Number(s.amount),
-          name: s.member.name,
-          avatarUrl: s.member.avatarUrl,
-        })),
+    const expenseItems: TransactionHistoryItem[] = expenses.map((e) => ({
+      id: e.id,
+      type: 'EXPENSE' as const,
+      description: e.description,
+      amount: Number(e.amount),
+      currency: e.currency,
+      date: e.date,
+      payers: e.payers.map((p) => ({
+        memberId: p.memberId,
+        amount: Number(p.amount),
+        name: p.member.name,
+        avatarUrl: p.member.avatarUrl,
       })),
-      ...settlements.map((s) => ({
-        id: s.id,
-        type: 'SETTLEMENT' as const,
-        description: s.note || `${s.from.name} paid ${s.to.name}`,
+      receivers: e.splits.map((s) => ({
+        memberId: s.memberId,
         amount: Number(s.amount),
-        currency: s.currency,
-        date: s.createdAt,
-        status: s.status,
-        from: {
-          memberId: s.fromId,
-          name: s.from.name,
-          avatarUrl: s.from.avatarUrl,
-        },
-        to: {
-          memberId: s.toId,
-          name: s.to.name,
-          avatarUrl: s.to.avatarUrl,
-        },
+        name: s.member.name,
+        avatarUrl: s.member.avatarUrl,
       })),
-    ].sort((a, b) => b.date.getTime() - a.date.getTime());
+    }));
 
-    // Group by month
-    const grouped: GroupedTransactionHistory = {};
-    transactions.forEach((tx) => {
-      const date = new Date(tx.date);
-      const monthYear = date.toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-      });
-      if (!grouped[monthYear]) {
-        grouped[monthYear] = [];
-      }
-      grouped[monthYear].push(tx);
-    });
+    const settlementItems: TransactionHistoryItem[] = settlements.map((s) => ({
+      id: s.id,
+      type: 'SETTLEMENT' as const,
+      description: s.note || `${s.from.name} paid ${s.to.name}`,
+      amount: Number(s.amount),
+      currency: s.currency,
+      date: s.createdAt,
+      status: s.status,
+      from: { memberId: s.fromId, name: s.from.name, avatarUrl: s.from.avatarUrl },
+      to: { memberId: s.toId, name: s.to.name, avatarUrl: s.to.avatarUrl },
+    }));
 
-    return grouped;
+    const merged = [...expenseItems, ...settlementItems]
+      .sort((a, b) => {
+        const diff = b.date.getTime() - a.date.getTime();
+        return diff !== 0 ? diff : a.id.localeCompare(b.id);
+      })
+      .slice(0, fetchCount);
+
+    const hasMore = merged.length > effectiveLimit;
+    const items = hasMore ? merged.slice(0, effectiveLimit) : merged;
+
+    let nextCursor: string | null = null;
+    if (hasMore && items.length > 0) {
+      const last = items[items.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify({ date: last.date.toISOString(), id: last.id }),
+      ).toString('base64');
+    }
+
+    return { items, nextCursor, hasMore };
   }
 
   async getBalances(

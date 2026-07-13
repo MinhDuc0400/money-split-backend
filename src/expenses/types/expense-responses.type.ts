@@ -107,3 +107,9 @@ export interface UserBalanceResponse {
 export interface GroupedTransactionHistory {
   [monthYear: string]: TransactionHistoryItem[];
 }
+
+export interface PaginatedTransactionHistory {
+  items: TransactionHistoryItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
