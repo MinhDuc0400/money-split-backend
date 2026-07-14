@@ -3,6 +3,22 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { RedisIoAdapter } from './events/redis-io.adapter';
+import { execSync } from 'child_process';
+import { writeFileSync } from 'fs';
+
+// Write prisma config with the live DATABASE_URL and run migrations before the app starts.
+// This is necessary on Railway where nixpacks excludes source/config files from the runtime image.
+if (process.env.DATABASE_URL) {
+  writeFileSync(
+    'prisma.config.mjs',
+    `import{defineConfig}from'prisma/config';export default defineConfig({schema:'prisma/schema.prisma',migrations:{path:'prisma/migrations'},datasource:{url:${JSON.stringify(process.env.DATABASE_URL)}}})`
+  );
+  try {
+    execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+  } catch (e) {
+    console.error('Migration failed:', e);
+  }
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
