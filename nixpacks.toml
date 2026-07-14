@@ -8,4 +8,4 @@ cmds = ["npm ci"]
 cmds = ["npx prisma generate", "npm run build"]
 
 [start]
-cmd = "npx prisma migrate deploy && npm run start:prod"
+cmd = "npm run start:migrate"
