@@ -108,6 +108,8 @@ All protected routes require `Authorization: Bearer <token>`.
 | `POST` | `/auth/login` | Login, returns JWT |
 | `GET` | `/auth/google` | Initiate Google OAuth flow |
 | `GET` | `/auth/google/callback` | Google OAuth callback |
+| `GET` | `/auth/apple` | Initiate Apple Sign In flow |
+| `POST` | `/auth/apple/callback` | Apple Sign In callback (form_post) |
 
 ### Groups
 
@@ -172,7 +174,12 @@ NODE_ENV           production
 FRONTEND_URL       https://your-vercel-app.vercel.app
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
-GOOGLE_CALLBACK_URL  https://your-railway-backend.up.railway.app/auth/google/callback
+GOOGLE_CALLBACK_URL    https://your-railway-backend.up.railway.app/auth/google/callback
+APPLE_CLIENT_ID        Your Apple Service ID (e.g. com.yourcompany.splitmoney)
+APPLE_TEAM_ID          Your Apple Developer Team ID
+APPLE_KEY_ID           Your Apple Key ID (from the .p8 file)
+APPLE_PRIVATE_KEY      Contents of your .p8 file (with \n for newlines)
+APPLE_CALLBACK_URL     https://your-railway-backend.up.railway.app/auth/apple/callback
 ```
 
 **Start command (Railway dashboard):** `node dist/main`

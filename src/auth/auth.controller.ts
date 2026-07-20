@@ -109,4 +109,24 @@ export class AuthController {
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
     return res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
   }
+
+  @Get('apple')
+  @UseGuards(AuthGuard('apple'))
+  @ApiOperation({ summary: 'Initiate Apple Sign In' })
+  async appleAuth() {
+    // Initiates the Apple Sign In flow
+  }
+
+  @Post('apple/callback')
+  @UseGuards(AuthGuard('apple'))
+  @ApiOperation({ summary: 'Apple Sign In callback' })
+  async appleAuthRedirect(
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const { token } = req.user as any;
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
+    return res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
+  }
 }

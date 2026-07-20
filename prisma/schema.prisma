@@ -34,6 +34,7 @@ model User {
   email        String   @unique
   passwordHash String?  @map("password_hash")
   googleId     String?  @unique @map("google_id")
+  appleId      String?  @unique @map("apple_id")
   name         String
   avatarUrl    String?  @map("avatar_url")
   createdAt    DateTime @default(now()) @map("created_at")

@@ -10,6 +10,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
 import { GoogleUser } from './interfaces/google-user.interface';
+import { AppleUser } from './interfaces/apple-user.interface';
 
 @Injectable()
 export class AuthService {
@@ -154,6 +155,53 @@ export class AuthService {
           googleId,
           name: `${firstName} ${lastName}`.trim(),
           avatarUrl: picture,
+        },
+      });
+    }
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+      },
+      token: this.generateToken(user.id, user.email, user.name, user.avatarUrl),
+    };
+  }
+
+  async validateAppleUser(appleUser: AppleUser) {
+    const { appleId, email, firstName, lastName } = appleUser;
+
+    // Try to find by appleId first
+    let user = await this.prisma.user.findUnique({
+      where: { appleId },
+    });
+
+    if (!user && email) {
+      // Fall back to email lookup (link existing account)
+      user = await this.prisma.user.findUnique({ where: { email } });
+      if (user && !user.appleId) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { appleId },
+        });
+      }
+    }
+
+    if (!user) {
+      // Create new user — Apple may not provide email on subsequent logins
+      const name =
+        [firstName, lastName].filter(Boolean).join(' ') || 'Apple User';
+      const avatarUrl = email
+        ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`
+        : `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(appleId)}`;
+      user = await this.prisma.user.create({
+        data: {
+          email: email || `${appleId}@apple.privaterelay.appleid.com`,
+          appleId,
+          name,
+          avatarUrl,
         },
       });
     }
