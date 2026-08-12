@@ -43,6 +43,7 @@ export interface ExpenseTransaction {
   description: string;
   amount: number;
   currency: string;
+  category: string;
   date: Date;
 
   payers: Participant[];
@@ -74,6 +75,7 @@ export interface ExpenseResponse {
   description: string;
   amount: number;
   splitType: string;
+  category: string;
   currency: string;
   date: Date;
   payers: {

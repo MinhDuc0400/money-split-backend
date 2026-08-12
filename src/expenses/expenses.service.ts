@@ -7,7 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
-import { Prisma, SplitType } from '@prisma/client';
+import { Prisma, SplitType, ExpenseCategory } from '@prisma/client';
 import {
   BalancesByCurrency,
   ExpenseResponse,
@@ -289,6 +289,7 @@ export class ExpensesService {
             description: dto.description,
             amount: dto.amount,
             splitType: dto.splitType,
+            category: dto.category || ExpenseCategory.OTHER,
             currency: dto.currency || 'USD',
             date: dto.date || new Date(),
           },
@@ -347,6 +348,7 @@ export class ExpensesService {
           description: createdExpense.description,
           amount: Number(createdExpense.amount),
           splitType: createdExpense.splitType,
+          category: createdExpense.category,
           currency: createdExpense.currency,
           date: createdExpense.date,
           payers: createdExpense.payers.map((p) => ({
@@ -436,6 +438,7 @@ export class ExpensesService {
       description: e.description,
       amount: Number(e.amount),
       currency: e.currency,
+      category: e.category,
       date: e.date,
       payers: e.payers.map((p) => ({
         memberId: p.memberId,
@@ -693,6 +696,7 @@ export class ExpensesService {
     const description = dto.description;
     const amount = dto.amount;
     const splitType = dto.splitType;
+    const category = dto.category || ExpenseCategory.OTHER;
     const currency = dto.currency || 'USD';
     const date = dto.date || new Date();
     const payers = dto.payers;
@@ -722,6 +726,7 @@ export class ExpensesService {
           description,
           amount,
           splitType,
+          category,
           currency,
           date,
           // Clear old payers and splits to replace them
@@ -768,6 +773,7 @@ export class ExpensesService {
         description: finalExpense.description,
         amount: Number(finalExpense.amount),
         splitType: finalExpense.splitType,
+        category: finalExpense.category,
         currency: finalExpense.currency,
         date: finalExpense.date,
         payers: finalExpense.payers.map((p) => ({

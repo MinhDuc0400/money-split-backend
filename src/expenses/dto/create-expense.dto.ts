@@ -12,7 +12,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { SplitType } from '@prisma/client';
+import { SplitType, ExpenseCategory } from '@prisma/client';
 
 class PayerDto {
   @ApiProperty({ example: 'uuid-of-member' })
@@ -68,6 +68,15 @@ export class CreateExpenseDto {
   @IsString()
   @IsOptional()
   currency?: string;
+
+  @ApiProperty({
+    enum: ExpenseCategory,
+    example: ExpenseCategory.OTHER,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(ExpenseCategory)
+  category?: ExpenseCategory;
 
   @ApiProperty({ type: [PayerDto] })
   @IsArray()
