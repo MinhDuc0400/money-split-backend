@@ -20,6 +20,18 @@ enum SplitType {
   SHARES
 }
 
+enum ExpenseCategory {
+  FOOD
+  TRANSPORT
+  RENT
+  UTILITIES
+  ENTERTAINMENT
+  SHOPPING
+  TRAVEL
+  HEALTH
+  OTHER
+}
+
 enum SettlementStatus {
   PENDING
   COMPLETED
@@ -146,6 +158,7 @@ model Expense {
   amount       Decimal  @db.Decimal(18, 6)
   roundingDiff Decimal  @default(0) @db.Decimal(18, 6) @map("rounding_diff")
   splitType    SplitType @map("split_type")
+  category     ExpenseCategory @default(OTHER) @map("category")
   currency     String   @default("USD")
   exchangeRate Decimal? @db.Decimal(18, 6) @map("exchange_rate") // to group currency
   date         DateTime @default(now())
