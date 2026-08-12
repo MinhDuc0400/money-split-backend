@@ -735,7 +735,12 @@ export class ExpensesService {
     const description = dto.description;
     const amount = dto.amount;
     const splitType = dto.splitType;
-    const category = dto.category || ExpenseCategory.OTHER;
+    // Only touch category when the caller actually sent one. Omitting it
+    // (e.g. from clients like money-split-mobile that predate categories)
+    // must leave the expense's existing category untouched instead of
+    // silently resetting it to OTHER.
+    const categoryUpdate =
+      dto.category !== undefined ? { category: dto.category } : {};
     const currency = dto.currency || 'USD';
     const date = dto.date || new Date();
     const payers = dto.payers;
@@ -765,7 +770,7 @@ export class ExpensesService {
           description,
           amount,
           splitType,
-          category,
+          ...categoryUpdate,
           currency,
           date,
           // Clear old payers and splits to replace them
