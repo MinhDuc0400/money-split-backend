@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../events/events.gateway';
@@ -20,6 +21,12 @@ describe('ExpensesService', () => {
     },
     memberBalance: {
       findMany: jest.fn(),
+    },
+    group: {
+      findUnique: jest.fn(),
+    },
+    expense: {
+      groupBy: jest.fn(),
     },
   };
 
@@ -140,6 +147,132 @@ describe('ExpensesService', () => {
         'POST /groups/:id/expenses',
         expect.any(Function),
       );
+    });
+  });
+
+  describe('getSpendingByCategory', () => {
+    const groupId = 'group-1';
+    const userId = 'user-1';
+
+    beforeEach(() => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+        userId,
+        deletedAt: null,
+      });
+    });
+
+    it('throws ForbiddenException when the caller is not an active member', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getSpendingByCategory(groupId, userId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.expense.groupBy).not.toHaveBeenCalled();
+    });
+
+    it('excludes soft-deleted expenses via deletedAt: null', async () => {
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByCategory(groupId, userId, 'USD');
+
+      expect(mockPrisma.expense.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ deletedAt: null }),
+        }),
+      );
+    });
+
+    it('filters by the provided currency without querying the group', async () => {
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByCategory(groupId, userId, 'EUR');
+
+      expect(mockPrisma.group.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.expense.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ currency: 'EUR' }),
+        }),
+      );
+    });
+
+    it("falls back to the group's own currency when none is provided", async () => {
+      mockPrisma.group.findUnique.mockResolvedValueOnce({
+        id: groupId,
+        currency: 'VND',
+      });
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByCategory(groupId, userId);
+
+      expect(mockPrisma.group.findUnique).toHaveBeenCalledWith({
+        where: { id: groupId },
+      });
+      expect(mockPrisma.expense.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ currency: 'VND' }),
+        }),
+      );
+    });
+
+    it('converts summed decimal totals to integer cents per category, including legacy OTHER-defaulted rows', async () => {
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([
+        { category: 'FOOD', _sum: { amount: 12.5 } },
+        { category: 'OTHER', _sum: { amount: 3.333333 } },
+      ]);
+
+      const result = await service.getSpendingByCategory(
+        groupId,
+        userId,
+        'USD',
+      );
+
+      expect(result).toEqual([
+        { category: 'FOOD', totalCents: 1250 },
+        { category: 'OTHER', totalCents: 333 },
+      ]);
+    });
+
+    it('returns an empty array when the group has no spending in that currency', async () => {
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([]);
+
+      const result = await service.getSpendingByCategory(
+        groupId,
+        userId,
+        'USD',
+      );
+
+      expect(result).toEqual([]);
+    });
+
+    it('builds a date range filter when from/to are provided', async () => {
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByCategory(
+        groupId,
+        userId,
+        'USD',
+        '2026-01-01',
+        '2026-01-31',
+      );
+
+      expect(mockPrisma.expense.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            date: { gte: new Date('2026-01-01'), lte: new Date('2026-01-31') },
+          }),
+        }),
+      );
+    });
+
+    it('omits the date filter entirely when from/to are not provided', async () => {
+      mockPrisma.expense.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByCategory(groupId, userId, 'USD');
+
+      const call = mockPrisma.expense.groupBy.mock.calls[0][0];
+      expect(call.where).not.toHaveProperty('date');
     });
   });
 });

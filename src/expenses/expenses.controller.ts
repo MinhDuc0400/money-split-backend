@@ -23,6 +23,7 @@ import {
 } from '@nestjs/swagger';
 import {
   BalancesByCurrency,
+  CategorySpending,
   ExpenseResponse,
   PaginatedTransactionHistory,
   RecommendedSettlement,
@@ -136,5 +137,25 @@ export class ExpensesController {
   ): Promise<RecommendedSettlement[]> {
     const userId = req.user!.id;
     return this.expensesService.getSettlements(groupId, userId);
+  }
+
+  @Get('expenses/by-category')
+  @ApiOperation({ summary: 'Get spending totals grouped by category' })
+  @ApiResponse({ status: 200, description: 'Return spending totals per category.' })
+  getSpendingByCategory(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+    @Query('currency') currency?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<CategorySpending[]> {
+    const userId = req.user!.id;
+    return this.expensesService.getSpendingByCategory(
+      groupId,
+      userId,
+      currency,
+      from,
+      to,
+    );
   }
 }

@@ -115,3 +115,8 @@ export interface PaginatedTransactionHistory {
   nextCursor: string | null;
   hasMore: boolean;
 }
+
+export interface CategorySpending {
+  category: string;
+  totalCents: number;
+}

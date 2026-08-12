@@ -10,6 +10,7 @@ import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { Prisma, SplitType, ExpenseCategory } from '@prisma/client';
 import {
   BalancesByCurrency,
+  CategorySpending,
   ExpenseResponse,
   PaginatedTransactionHistory,
   RecommendedSettlement,
@@ -485,6 +486,44 @@ export class ExpensesService {
     }
 
     return { items, nextCursor, hasMore };
+  }
+
+  async getSpendingByCategory(
+    groupId: string,
+    userId: string,
+    currency?: string,
+    from?: string,
+    to?: string,
+  ): Promise<CategorySpending[]> {
+    await this.assertActiveMember(groupId, userId);
+
+    let effectiveCurrency = currency;
+    if (!effectiveCurrency) {
+      const group = await this.prisma.group.findUnique({
+        where: { id: groupId },
+      });
+      effectiveCurrency = group?.currency || 'USD';
+    }
+
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (from) dateFilter.gte = new Date(from);
+    if (to) dateFilter.lte = new Date(to);
+
+    const grouped = await this.prisma.expense.groupBy({
+      by: ['category'],
+      where: {
+        groupId,
+        deletedAt: null,
+        currency: effectiveCurrency,
+        ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
+      },
+      _sum: { amount: true },
+    });
+
+    return grouped.map((g) => ({
+      category: g.category,
+      totalCents: toCents(Number(g._sum.amount ?? 0)),
+    }));
   }
 
   async getBalances(
