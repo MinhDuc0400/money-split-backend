@@ -13,6 +13,7 @@ import {
   CategorySpending,
   ExpenseResponse,
   PaginatedTransactionHistory,
+  PersonCategorySpending,
   PersonSpending,
   RecommendedSettlement,
   TransactionHistoryItem,
@@ -581,6 +582,76 @@ export class ExpensesService {
         name: memberMap.get(g.memberId)!.name,
         totalCents: toCents(Number(g._sum.amount ?? 0)),
       }));
+  }
+
+  async getSpendingByPersonCategory(
+    groupId: string,
+    userId: string,
+    currency?: string,
+    from?: string,
+    to?: string,
+  ): Promise<PersonCategorySpending[]> {
+    await this.assertActiveMember(groupId, userId);
+
+    let effectiveCurrency = currency;
+    if (!effectiveCurrency) {
+      const group = await this.prisma.group.findUnique({
+        where: { id: groupId },
+      });
+      effectiveCurrency = group?.currency || 'USD';
+    }
+
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (from) dateFilter.gte = new Date(from);
+    if (to) dateFilter.lte = new Date(to);
+
+    const splits = await this.prisma.expenseSplit.findMany({
+      where: {
+        expense: {
+          groupId,
+          deletedAt: null,
+          currency: effectiveCurrency,
+          ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
+        },
+      },
+      select: {
+        memberId: true,
+        amount: true,
+        expense: { select: { category: true } },
+      },
+    });
+
+    const activeMembers = await this.prisma.groupMember.findMany({
+      where: { groupId, deletedAt: null },
+    });
+    const memberMap = new Map(activeMembers.map((m) => [m.id, m]));
+
+    const totals = new Map<
+      string,
+      { memberId: string; category: string; totalCents: number }
+    >();
+    for (const split of splits) {
+      if (!memberMap.has(split.memberId)) continue;
+      const key = `${split.memberId}::${split.expense.category}`;
+      const existing = totals.get(key);
+      const cents = toCents(Number(split.amount));
+      if (existing) {
+        existing.totalCents += cents;
+      } else {
+        totals.set(key, {
+          memberId: split.memberId,
+          category: split.expense.category,
+          totalCents: cents,
+        });
+      }
+    }
+
+    return Array.from(totals.values()).map((t) => ({
+      memberId: t.memberId,
+      name: memberMap.get(t.memberId)!.name,
+      category: t.category,
+      totalCents: t.totalCents,
+    }));
   }
 
   async getBalances(

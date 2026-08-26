@@ -38,6 +38,7 @@ describe('ExpensesService', () => {
     expenseSplit: {
       createMany: jest.fn(),
       groupBy: jest.fn(),
+      findMany: jest.fn(),
     },
     debt: {
       findUnique: jest.fn(),
@@ -432,6 +433,109 @@ describe('ExpensesService', () => {
       mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
 
       const result = await service.getSpendingByPerson(groupId, userId, 'USD');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('getSpendingByPersonCategory', () => {
+    const groupId = 'group-1';
+    const userId = 'user-1';
+
+    beforeEach(() => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+        userId,
+        deletedAt: null,
+      });
+    });
+
+    it('throws ForbiddenException when the caller is not an active member', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getSpendingByPersonCategory(groupId, userId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.expenseSplit.findMany).not.toHaveBeenCalled();
+    });
+
+    it('filters the joined expense by currency without querying the group', async () => {
+      mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([]);
+
+      await service.getSpendingByPersonCategory(groupId, userId, 'EUR');
+
+      expect(mockPrisma.group.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.expenseSplit.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            expense: expect.objectContaining({ groupId, deletedAt: null, currency: 'EUR' }),
+          }),
+          select: expect.objectContaining({
+            memberId: true,
+            amount: true,
+            expense: { select: { category: true } },
+          }),
+        }),
+      );
+    });
+
+    it('builds a date range filter on the joined expense when from/to are provided', async () => {
+      mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([]);
+
+      await service.getSpendingByPersonCategory(
+        groupId,
+        userId,
+        'USD',
+        '2026-01-01',
+        '2026-01-31',
+      );
+
+      expect(mockPrisma.expenseSplit.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            expense: expect.objectContaining({
+              date: { gte: new Date('2026-01-01'), lte: new Date('2026-01-31') },
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('aggregates multiple splits for the same member and category into one row', async () => {
+      mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([
+        { memberId: 'member-a', amount: 10, expense: { category: 'FOOD' } },
+        { memberId: 'member-a', amount: 2.5, expense: { category: 'FOOD' } },
+        { memberId: 'member-a', amount: 5, expense: { category: 'TRANSPORT' } },
+      ]);
+      mockPrisma.groupMember.findMany.mockResolvedValueOnce([
+        { id: 'member-a', name: 'Alice', deletedAt: null },
+      ]);
+
+      const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
+
+      expect(result).toEqual([
+        { memberId: 'member-a', name: 'Alice', category: 'FOOD', totalCents: 1250 },
+        { memberId: 'member-a', name: 'Alice', category: 'TRANSPORT', totalCents: 500 },
+      ]);
+    });
+
+    it('drops rows for members who are no longer active', async () => {
+      mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([
+        { memberId: 'member-removed', amount: 10, expense: { category: 'FOOD' } },
+      ]);
+      mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
+
+      expect(result).toEqual([]);
+    });
+
+    it('returns an empty array when there are no splits in that currency', async () => {
+      mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([]);
+      mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
 
       expect(result).toEqual([]);
     });

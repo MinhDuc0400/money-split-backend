@@ -126,3 +126,10 @@ export interface PersonSpending {
   name: string;
   totalCents: number;
 }
+
+export interface PersonCategorySpending {
+  memberId: string;
+  name: string;
+  category: string;
+  totalCents: number;
+}

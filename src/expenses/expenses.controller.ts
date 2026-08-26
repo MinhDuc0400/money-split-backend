@@ -26,6 +26,7 @@ import {
   CategorySpending,
   ExpenseResponse,
   PaginatedTransactionHistory,
+  PersonCategorySpending,
   PersonSpending,
   RecommendedSettlement,
   UserBalanceResponse,
@@ -180,6 +181,26 @@ export class ExpensesController {
       from,
       to,
       effectiveMetric,
+    );
+  }
+
+  @Get('expenses/by-person-category')
+  @ApiOperation({ summary: 'Get spending totals grouped by member and category (share amounts)' })
+  @ApiResponse({ status: 200, description: 'Return spending totals per member and category.' })
+  getSpendingByPersonCategory(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+    @Query('currency') currency?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<PersonCategorySpending[]> {
+    const userId = req.user!.id;
+    return this.expensesService.getSpendingByPersonCategory(
+      groupId,
+      userId,
+      currency,
+      from,
+      to,
     );
   }
 }
