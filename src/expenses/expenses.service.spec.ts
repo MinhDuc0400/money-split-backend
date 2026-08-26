@@ -33,9 +33,11 @@ describe('ExpensesService', () => {
     },
     expensePayer: {
       createMany: jest.fn(),
+      groupBy: jest.fn(),
     },
     expenseSplit: {
       createMany: jest.fn(),
+      groupBy: jest.fn(),
     },
     debt: {
       findUnique: jest.fn(),
@@ -291,6 +293,147 @@ describe('ExpensesService', () => {
 
       const call = mockPrisma.expense.groupBy.mock.calls[0][0];
       expect(call.where).not.toHaveProperty('date');
+    });
+  });
+
+  describe('getSpendingByPerson', () => {
+    const groupId = 'group-1';
+    const userId = 'user-1';
+
+    beforeEach(() => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+        userId,
+        deletedAt: null,
+      });
+    });
+
+    it('throws ForbiddenException when the caller is not an active member', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getSpendingByPerson(groupId, userId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.expensePayer.groupBy).not.toHaveBeenCalled();
+      expect(mockPrisma.expenseSplit.groupBy).not.toHaveBeenCalled();
+    });
+
+    it("defaults to the 'paid' metric and queries expensePayer", async () => {
+      mockPrisma.expensePayer.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByPerson(groupId, userId, 'USD');
+
+      expect(mockPrisma.expensePayer.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          by: ['memberId'],
+          where: expect.objectContaining({
+            expense: expect.objectContaining({
+              groupId,
+              deletedAt: null,
+              currency: 'USD',
+            }),
+          }),
+          _sum: { amount: true },
+        }),
+      );
+      expect(mockPrisma.expenseSplit.groupBy).not.toHaveBeenCalled();
+    });
+
+    it("queries expenseSplit when metric is 'share'", async () => {
+      mockPrisma.expenseSplit.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByPerson(
+        groupId,
+        userId,
+        'USD',
+        undefined,
+        undefined,
+        'share',
+      );
+
+      expect(mockPrisma.expenseSplit.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          by: ['memberId'],
+          where: expect.objectContaining({
+            expense: expect.objectContaining({
+              groupId,
+              deletedAt: null,
+              currency: 'USD',
+            }),
+          }),
+          _sum: { amount: true },
+        }),
+      );
+      expect(mockPrisma.expensePayer.groupBy).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the group's own currency when none is provided", async () => {
+      mockPrisma.group.findUnique.mockResolvedValueOnce({
+        id: groupId,
+        currency: 'VND',
+      });
+      mockPrisma.expensePayer.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByPerson(groupId, userId);
+
+      expect(mockPrisma.group.findUnique).toHaveBeenCalledWith({
+        where: { id: groupId },
+      });
+      expect(mockPrisma.expensePayer.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            expense: expect.objectContaining({ currency: 'VND' }),
+          }),
+        }),
+      );
+    });
+
+    it('builds a date range filter on the joined expense when from/to are provided', async () => {
+      mockPrisma.expensePayer.groupBy.mockResolvedValueOnce([]);
+
+      await service.getSpendingByPerson(
+        groupId,
+        userId,
+        'USD',
+        '2026-01-01',
+        '2026-01-31',
+      );
+
+      expect(mockPrisma.expensePayer.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            expense: expect.objectContaining({
+              date: { gte: new Date('2026-01-01'), lte: new Date('2026-01-31') },
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('joins member names, converts to cents, and drops removed members', async () => {
+      mockPrisma.expensePayer.groupBy.mockResolvedValueOnce([
+        { memberId: 'member-a', _sum: { amount: 12.5 } },
+        { memberId: 'member-removed', _sum: { amount: 7 } },
+      ]);
+      mockPrisma.groupMember.findMany.mockResolvedValueOnce([
+        { id: 'member-a', name: 'Alice', deletedAt: null },
+      ]);
+
+      const result = await service.getSpendingByPerson(groupId, userId, 'USD');
+
+      expect(result).toEqual([
+        { memberId: 'member-a', name: 'Alice', totalCents: 1250 },
+      ]);
+    });
+
+    it('returns an empty array when there is no spending in that currency', async () => {
+      mockPrisma.expensePayer.groupBy.mockResolvedValueOnce([]);
+      mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getSpendingByPerson(groupId, userId, 'USD');
+
+      expect(result).toEqual([]);
     });
   });
 

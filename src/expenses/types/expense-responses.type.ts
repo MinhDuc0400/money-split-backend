@@ -120,3 +120,9 @@ export interface CategorySpending {
   category: string;
   totalCents: number;
 }
+
+export interface PersonSpending {
+  memberId: string;
+  name: string;
+  totalCents: number;
+}

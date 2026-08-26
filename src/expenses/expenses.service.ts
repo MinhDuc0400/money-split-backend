@@ -13,6 +13,7 @@ import {
   CategorySpending,
   ExpenseResponse,
   PaginatedTransactionHistory,
+  PersonSpending,
   RecommendedSettlement,
   TransactionHistoryItem,
   UserBalanceResponse,
@@ -524,6 +525,62 @@ export class ExpensesService {
       category: g.category,
       totalCents: toCents(Number(g._sum.amount ?? 0)),
     }));
+  }
+
+  async getSpendingByPerson(
+    groupId: string,
+    userId: string,
+    currency?: string,
+    from?: string,
+    to?: string,
+    metric: 'paid' | 'share' = 'paid',
+  ): Promise<PersonSpending[]> {
+    await this.assertActiveMember(groupId, userId);
+
+    let effectiveCurrency = currency;
+    if (!effectiveCurrency) {
+      const group = await this.prisma.group.findUnique({
+        where: { id: groupId },
+      });
+      effectiveCurrency = group?.currency || 'USD';
+    }
+
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (from) dateFilter.gte = new Date(from);
+    if (to) dateFilter.lte = new Date(to);
+
+    const expenseWhere = {
+      groupId,
+      deletedAt: null,
+      currency: effectiveCurrency,
+      ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
+    };
+
+    const grouped =
+      metric === 'share'
+        ? await this.prisma.expenseSplit.groupBy({
+            by: ['memberId'],
+            where: { expense: expenseWhere },
+            _sum: { amount: true },
+          })
+        : await this.prisma.expensePayer.groupBy({
+            by: ['memberId'],
+            where: { expense: expenseWhere },
+            _sum: { amount: true },
+          });
+
+    const activeMembers = await this.prisma.groupMember.findMany({
+      where: { groupId, deletedAt: null },
+    });
+    const memberMap = new Map(activeMembers.map((m) => [m.id, m]));
+
+    return grouped
+      .filter((g) => memberMap.has(g.memberId))
+      .map((g) => ({
+        memberId: g.memberId,
+        name: memberMap.get(g.memberId)!.name,
+        totalCents: toCents(Number(g._sum.amount ?? 0)),
+      }));
   }
 
   async getBalances(
