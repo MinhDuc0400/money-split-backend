@@ -29,6 +29,7 @@ import {
   PersonCategorySpending,
   PersonSpending,
   RecommendedSettlement,
+  TopExpenseItem,
   UserBalanceResponse,
 } from './types/expense-responses.type';
 import type { Request } from 'express';
@@ -201,6 +202,29 @@ export class ExpensesController {
       currency,
       from,
       to,
+    );
+  }
+
+  @Get('expenses/top')
+  @ApiOperation({ summary: 'Get the largest individual expenses' })
+  @ApiResponse({ status: 200, description: 'Return the top expenses by amount.' })
+  getTopExpenses(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+    @Query('currency') currency?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+  ): Promise<TopExpenseItem[]> {
+    const userId = req.user!.id;
+    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit, 10) || 5, 1), 20) : 5;
+    return this.expensesService.getTopExpenses(
+      groupId,
+      userId,
+      currency,
+      from,
+      to,
+      parsedLimit,
     );
   }
 }

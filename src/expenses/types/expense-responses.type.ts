@@ -133,3 +133,13 @@ export interface PersonCategorySpending {
   category: string;
   totalCents: number;
 }
+
+export interface TopExpenseItem {
+  id: string;
+  description: string;
+  amount: number;
+  currency: string;
+  category: string;
+  date: Date;
+  payerNames: string[];
+}

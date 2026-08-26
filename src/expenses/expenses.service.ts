@@ -16,6 +16,7 @@ import {
   PersonCategorySpending,
   PersonSpending,
   RecommendedSettlement,
+  TopExpenseItem,
   TransactionHistoryItem,
   UserBalanceResponse,
 } from './types/expense-responses.type';
@@ -651,6 +652,51 @@ export class ExpensesService {
       name: memberMap.get(t.memberId)!.name,
       category: t.category,
       totalCents: t.totalCents,
+    }));
+  }
+
+  async getTopExpenses(
+    groupId: string,
+    userId: string,
+    currency?: string,
+    from?: string,
+    to?: string,
+    limit = 5,
+  ): Promise<TopExpenseItem[]> {
+    await this.assertActiveMember(groupId, userId);
+
+    let effectiveCurrency = currency;
+    if (!effectiveCurrency) {
+      const group = await this.prisma.group.findUnique({
+        where: { id: groupId },
+      });
+      effectiveCurrency = group?.currency || 'USD';
+    }
+
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (from) dateFilter.gte = new Date(from);
+    if (to) dateFilter.lte = new Date(to);
+
+    const expenses = await this.prisma.expense.findMany({
+      where: {
+        groupId,
+        deletedAt: null,
+        currency: effectiveCurrency,
+        ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
+      },
+      include: { payers: { include: { member: true } } },
+      orderBy: { amount: 'desc' },
+      take: limit,
+    });
+
+    return expenses.map((e) => ({
+      id: e.id,
+      description: e.description,
+      amount: Number(e.amount),
+      currency: e.currency,
+      category: e.category,
+      date: e.date,
+      payerNames: e.payers.map((p) => p.member.name),
     }));
   }
 

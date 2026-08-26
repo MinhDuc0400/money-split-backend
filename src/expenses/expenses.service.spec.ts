@@ -28,6 +28,7 @@ describe('ExpensesService', () => {
     },
     expense: {
       groupBy: jest.fn(),
+      findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
     },
@@ -536,6 +537,120 @@ describe('ExpensesService', () => {
       mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
 
       const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('getTopExpenses', () => {
+    const groupId = 'group-1';
+    const userId = 'user-1';
+
+    beforeEach(() => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+        userId,
+        deletedAt: null,
+      });
+    });
+
+    it('throws ForbiddenException when the caller is not an active member', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getTopExpenses(groupId, userId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.expense.findMany).not.toHaveBeenCalled();
+    });
+
+    it('queries sorted descending by amount, defaulting limit to 5', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      await service.getTopExpenses(groupId, userId, 'USD');
+
+      expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ groupId, deletedAt: null, currency: 'USD' }),
+          orderBy: { amount: 'desc' },
+          take: 5,
+        }),
+      );
+    });
+
+    it('respects an explicit limit', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      await service.getTopExpenses(groupId, userId, 'USD', undefined, undefined, 2);
+
+      expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 2 }),
+      );
+    });
+
+    it("falls back to the group's own currency when none is provided", async () => {
+      mockPrisma.group.findUnique.mockResolvedValueOnce({ id: groupId, currency: 'VND' });
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      await service.getTopExpenses(groupId, userId);
+
+      expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ currency: 'VND' }),
+        }),
+      );
+    });
+
+    it('builds a date range filter when from/to are provided', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      await service.getTopExpenses(groupId, userId, 'USD', '2026-01-01', '2026-01-31');
+
+      expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            date: { gte: new Date('2026-01-01'), lte: new Date('2026-01-31') },
+          }),
+        }),
+      );
+    });
+
+    it('maps expense rows to TopExpenseItem including all payer names', async () => {
+      const date = new Date('2026-02-01T00:00:00.000Z');
+      mockPrisma.expense.findMany.mockResolvedValueOnce([
+        {
+          id: 'expense-1',
+          description: 'Hotel',
+          amount: 300,
+          currency: 'USD',
+          category: 'TRAVEL',
+          date,
+          payers: [
+            { member: { name: 'Alice' } },
+            { member: { name: 'Bob' } },
+          ],
+        },
+      ]);
+
+      const result = await service.getTopExpenses(groupId, userId, 'USD');
+
+      expect(result).toEqual([
+        {
+          id: 'expense-1',
+          description: 'Hotel',
+          amount: 300,
+          currency: 'USD',
+          category: 'TRAVEL',
+          date,
+          payerNames: ['Alice', 'Bob'],
+        },
+      ]);
+    });
+
+    it('returns an empty array when there are no expenses in that currency', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getTopExpenses(groupId, userId, 'USD');
 
       expect(result).toEqual([]);
     });
