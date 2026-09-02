@@ -9,6 +9,7 @@ import {
   Headers,
   UseGuards,
   Req,
+  Res,
   Query,
 } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
@@ -32,7 +33,7 @@ import {
   TopExpenseItem,
   UserBalanceResponse,
 } from './types/expense-responses.type';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import '../common/interfaces/request-user.interface';
 
 @ApiTags('expenses')
@@ -106,7 +107,12 @@ export class ExpensesController {
   ): Promise<PaginatedTransactionHistory> {
     const userId = req.user!.id;
     const parsedLimit = limit ? Math.min(parseInt(limit, 10) || 20, 50) : 20;
-    return this.expensesService.getGroupTransactions(groupId, userId, parsedLimit, cursor);
+    return this.expensesService.getGroupTransactions(
+      groupId,
+      userId,
+      parsedLimit,
+      cursor,
+    );
   }
 
   @Get('balances')
@@ -144,7 +150,10 @@ export class ExpensesController {
 
   @Get('expenses/by-category')
   @ApiOperation({ summary: 'Get spending totals grouped by category' })
-  @ApiResponse({ status: 200, description: 'Return spending totals per category.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Return spending totals per category.',
+  })
   getSpendingByCategory(
     @Param('groupId') groupId: string,
     @Req() req: Request,
@@ -163,8 +172,13 @@ export class ExpensesController {
   }
 
   @Get('expenses/by-person')
-  @ApiOperation({ summary: 'Get spending totals grouped by member (paid or share)' })
-  @ApiResponse({ status: 200, description: 'Return spending totals per member.' })
+  @ApiOperation({
+    summary: 'Get spending totals grouped by member (paid or share)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Return spending totals per member.',
+  })
   getSpendingByPerson(
     @Param('groupId') groupId: string,
     @Req() req: Request,
@@ -186,8 +200,14 @@ export class ExpensesController {
   }
 
   @Get('expenses/by-person-category')
-  @ApiOperation({ summary: 'Get spending totals grouped by member and category (share amounts)' })
-  @ApiResponse({ status: 200, description: 'Return spending totals per member and category.' })
+  @ApiOperation({
+    summary:
+      'Get spending totals grouped by member and category (share amounts)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Return spending totals per member and category.',
+  })
   getSpendingByPersonCategory(
     @Param('groupId') groupId: string,
     @Req() req: Request,
@@ -207,7 +227,10 @@ export class ExpensesController {
 
   @Get('expenses/top')
   @ApiOperation({ summary: 'Get the largest individual expenses' })
-  @ApiResponse({ status: 200, description: 'Return the top expenses by amount.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Return the top expenses by amount.',
+  })
   getTopExpenses(
     @Param('groupId') groupId: string,
     @Req() req: Request,
@@ -217,7 +240,9 @@ export class ExpensesController {
     @Query('limit') limit?: string,
   ): Promise<TopExpenseItem[]> {
     const userId = req.user!.id;
-    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit, 10) || 5, 1), 20) : 5;
+    const parsedLimit = limit
+      ? Math.min(Math.max(parseInt(limit, 10) || 5, 1), 20)
+      : 5;
     return this.expensesService.getTopExpenses(
       groupId,
       userId,
@@ -226,5 +251,27 @@ export class ExpensesController {
       to,
       parsedLimit,
     );
+  }
+
+  @Get('expenses/export')
+  @ApiOperation({
+    summary: "Export a group's full expense history as an .xlsx file",
+  })
+  @ApiResponse({ status: 200, description: 'Returns a binary .xlsx file.' })
+  async exportExpenses(
+    @Param('groupId') groupId: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const userId = req.user!.id;
+    const { buffer, filename, filenameUtf8 } =
+      await this.expensesService.exportExpenses(groupId, userId);
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filenameUtf8)}`,
+    });
+    res.send(buffer);
   }
 }

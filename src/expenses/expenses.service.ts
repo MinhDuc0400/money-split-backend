@@ -30,6 +30,8 @@ import {
   SplitInput,
 } from './types/expense-internal.types';
 import { EventsGateway } from '../events/events.gateway';
+import ExcelJS from 'exceljs';
+import { buildExportFilename } from '../helpers/filename.helper';
 
 @Injectable()
 export class ExpensesService {
@@ -466,7 +468,11 @@ export class ExpensesService {
       currency: s.currency,
       date: s.createdAt,
       status: s.status,
-      from: { memberId: s.fromId, name: s.from.name, avatarUrl: s.from.avatarUrl },
+      from: {
+        memberId: s.fromId,
+        name: s.from.name,
+        avatarUrl: s.from.avatarUrl,
+      },
       to: { memberId: s.toId, name: s.to.name, avatarUrl: s.to.avatarUrl },
     }));
 
@@ -698,6 +704,91 @@ export class ExpensesService {
       date: e.date,
       payerNames: e.payers.map((p) => p.member.name),
     }));
+  }
+
+  async exportExpenses(
+    groupId: string,
+    userId: string,
+  ): Promise<{ buffer: Buffer; filename: string; filenameUtf8: string }> {
+    await this.assertActiveMember(groupId, userId);
+
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId },
+    });
+    const { filename, filenameUtf8 } = buildExportFilename(
+      group?.name ?? 'Group',
+    );
+
+    const expenses = await this.prisma.expense.findMany({
+      where: { groupId, deletedAt: null },
+      include: {
+        payers: { include: { member: true } },
+        splits: { include: { member: true } },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // Distinct members who ever appeared as a payer or split participant across
+    // this group's *entire* expense history — deliberately not filtered to
+    // active members. Mirrors getTopExpenses' payerNames convention: each row
+    // is a real historical record, so a member later removed from the group
+    // should not have their historical amounts silently dropped or blanked.
+    // Sorted by name for a stable, human-readable column order.
+    const memberNameById = new Map<string, string>();
+    for (const e of expenses) {
+      for (const p of e.payers) memberNameById.set(p.memberId, p.member.name);
+      for (const s of e.splits) memberNameById.set(s.memberId, s.member.name);
+    }
+    const memberColumns = Array.from(memberNameById.entries())
+      .map(([memberId, name]) => ({ memberId, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Expenses');
+
+    sheet.columns = [
+      { header: 'Date', key: 'date', width: 14 },
+      { header: 'Description', key: 'description', width: 28 },
+      { header: 'Amount', key: 'amount', width: 12 },
+      { header: 'Currency', key: 'currency', width: 10 },
+      { header: 'Category', key: 'category', width: 14 },
+      { header: 'Payer(s)', key: 'payers', width: 24 },
+      { header: 'Split type', key: 'splitType', width: 12 },
+      ...memberColumns.map((m) => ({
+        header: m.name,
+        key: `member:${m.memberId}`,
+        width: 14,
+      })),
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    for (const e of expenses) {
+      const row: Record<string, unknown> = {
+        date: e.date.toISOString().slice(0, 10),
+        description: e.description,
+        amount: Number(e.amount),
+        currency: e.currency,
+        category: e.category,
+        payers: e.payers.map((p) => p.member.name).join(', '),
+        splitType: e.splitType,
+      };
+      // A member's column key is only set when they participated in this
+      // expense, so exceljs leaves the cell blank/undefined for everyone
+      // else — never 0. A blank cell is visually distinct from "participated
+      // with a zero-amount share," which a 0 would misrepresent.
+      for (const split of e.splits) {
+        row[`member:${split.memberId}`] = Number(split.amount);
+      }
+      sheet.addRow(row);
+    }
+
+    // exceljs's bundled index.d.ts declares its own local `Buffer` interface
+    // (`extends ArrayBuffer`) that shadows Node's real Buffer type within its
+    // own type declarations, even though writeBuffer() genuinely returns a
+    // real Node Buffer instance at runtime (verified directly against the
+    // installed exceljs version). Bridge the type-only mismatch here.
+    const buffer = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
+    return { buffer, filename, filenameUtf8 };
   }
 
   async getBalances(

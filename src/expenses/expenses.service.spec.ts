@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../events/events.gateway';
 import { withIdempotency } from '../helpers/idempotency.helper';
 import { SplitType } from '@prisma/client';
+import ExcelJS from 'exceljs';
 
 jest.mock('../helpers/idempotency.helper');
 const mockWithIdempotency = withIdempotency as jest.MockedFunction<
@@ -406,7 +407,10 @@ describe('ExpensesService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             expense: expect.objectContaining({
-              date: { gte: new Date('2026-01-01'), lte: new Date('2026-01-31') },
+              date: {
+                gte: new Date('2026-01-01'),
+                lte: new Date('2026-01-31'),
+              },
             }),
           }),
         }),
@@ -470,7 +474,11 @@ describe('ExpensesService', () => {
       expect(mockPrisma.expenseSplit.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            expense: expect.objectContaining({ groupId, deletedAt: null, currency: 'EUR' }),
+            expense: expect.objectContaining({
+              groupId,
+              deletedAt: null,
+              currency: 'EUR',
+            }),
           }),
           select: expect.objectContaining({
             memberId: true,
@@ -496,7 +504,10 @@ describe('ExpensesService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             expense: expect.objectContaining({
-              date: { gte: new Date('2026-01-01'), lte: new Date('2026-01-31') },
+              date: {
+                gte: new Date('2026-01-01'),
+                lte: new Date('2026-01-31'),
+              },
             }),
           }),
         }),
@@ -513,21 +524,43 @@ describe('ExpensesService', () => {
         { id: 'member-a', name: 'Alice', deletedAt: null },
       ]);
 
-      const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
+      const result = await service.getSpendingByPersonCategory(
+        groupId,
+        userId,
+        'USD',
+      );
 
       expect(result).toEqual([
-        { memberId: 'member-a', name: 'Alice', category: 'FOOD', totalCents: 1250 },
-        { memberId: 'member-a', name: 'Alice', category: 'TRANSPORT', totalCents: 500 },
+        {
+          memberId: 'member-a',
+          name: 'Alice',
+          category: 'FOOD',
+          totalCents: 1250,
+        },
+        {
+          memberId: 'member-a',
+          name: 'Alice',
+          category: 'TRANSPORT',
+          totalCents: 500,
+        },
       ]);
     });
 
     it('drops rows for members who are no longer active', async () => {
       mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([
-        { memberId: 'member-removed', amount: 10, expense: { category: 'FOOD' } },
+        {
+          memberId: 'member-removed',
+          amount: 10,
+          expense: { category: 'FOOD' },
+        },
       ]);
       mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
 
-      const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
+      const result = await service.getSpendingByPersonCategory(
+        groupId,
+        userId,
+        'USD',
+      );
 
       expect(result).toEqual([]);
     });
@@ -536,7 +569,11 @@ describe('ExpensesService', () => {
       mockPrisma.expenseSplit.findMany.mockResolvedValueOnce([]);
       mockPrisma.groupMember.findMany.mockResolvedValueOnce([]);
 
-      const result = await service.getSpendingByPersonCategory(groupId, userId, 'USD');
+      const result = await service.getSpendingByPersonCategory(
+        groupId,
+        userId,
+        'USD',
+      );
 
       expect(result).toEqual([]);
     });
@@ -558,9 +595,9 @@ describe('ExpensesService', () => {
     it('throws ForbiddenException when the caller is not an active member', async () => {
       mockPrisma.groupMember.findUnique.mockResolvedValueOnce(null);
 
-      await expect(
-        service.getTopExpenses(groupId, userId),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.getTopExpenses(groupId, userId)).rejects.toThrow(
+        ForbiddenException,
+      );
       expect(mockPrisma.expense.findMany).not.toHaveBeenCalled();
     });
 
@@ -571,7 +608,11 @@ describe('ExpensesService', () => {
 
       expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ groupId, deletedAt: null, currency: 'USD' }),
+          where: expect.objectContaining({
+            groupId,
+            deletedAt: null,
+            currency: 'USD',
+          }),
           orderBy: { amount: 'desc' },
           take: 5,
         }),
@@ -581,7 +622,14 @@ describe('ExpensesService', () => {
     it('respects an explicit limit', async () => {
       mockPrisma.expense.findMany.mockResolvedValueOnce([]);
 
-      await service.getTopExpenses(groupId, userId, 'USD', undefined, undefined, 2);
+      await service.getTopExpenses(
+        groupId,
+        userId,
+        'USD',
+        undefined,
+        undefined,
+        2,
+      );
 
       expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 2 }),
@@ -589,7 +637,10 @@ describe('ExpensesService', () => {
     });
 
     it("falls back to the group's own currency when none is provided", async () => {
-      mockPrisma.group.findUnique.mockResolvedValueOnce({ id: groupId, currency: 'VND' });
+      mockPrisma.group.findUnique.mockResolvedValueOnce({
+        id: groupId,
+        currency: 'VND',
+      });
       mockPrisma.expense.findMany.mockResolvedValueOnce([]);
 
       await service.getTopExpenses(groupId, userId);
@@ -604,7 +655,13 @@ describe('ExpensesService', () => {
     it('builds a date range filter when from/to are provided', async () => {
       mockPrisma.expense.findMany.mockResolvedValueOnce([]);
 
-      await service.getTopExpenses(groupId, userId, 'USD', '2026-01-01', '2026-01-31');
+      await service.getTopExpenses(
+        groupId,
+        userId,
+        'USD',
+        '2026-01-01',
+        '2026-01-31',
+      );
 
       expect(mockPrisma.expense.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -625,10 +682,7 @@ describe('ExpensesService', () => {
           currency: 'USD',
           category: 'TRAVEL',
           date,
-          payers: [
-            { member: { name: 'Alice' } },
-            { member: { name: 'Bob' } },
-          ],
+          payers: [{ member: { name: 'Alice' } }, { member: { name: 'Bob' } }],
         },
       ]);
 
@@ -656,6 +710,194 @@ describe('ExpensesService', () => {
     });
   });
 
+  describe('exportExpenses', () => {
+    const groupId = 'group-1';
+    const userId = 'user-1';
+
+    beforeEach(() => {
+      mockPrisma.groupMember.findUnique.mockResolvedValue({
+        id: 'member-1',
+        groupId,
+        userId,
+        deletedAt: null,
+      });
+      mockPrisma.group.findUnique.mockResolvedValue({
+        id: groupId,
+        name: 'Trip to Japan',
+        currency: 'USD',
+      });
+    });
+
+    it('throws ForbiddenException when the caller is not an active member', async () => {
+      mockPrisma.groupMember.findUnique.mockResolvedValueOnce(null);
+
+      await expect(service.exportExpenses(groupId, userId)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(mockPrisma.expense.findMany).not.toHaveBeenCalled();
+    });
+
+    it('queries all non-deleted expenses for the group ordered by date ascending, with payers and splits included', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      await service.exportExpenses(groupId, userId);
+
+      expect(mockPrisma.expense.findMany).toHaveBeenCalledWith({
+        where: { groupId, deletedAt: null },
+        include: {
+          payers: { include: { member: true } },
+          splits: { include: { member: true } },
+        },
+        orderBy: { date: 'asc' },
+      });
+    });
+
+    it('produces a workbook with only the 7 fixed columns and a header row for a zero-expense group', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+
+      const { buffer, filename, filenameUtf8 } = await service.exportExpenses(
+        groupId,
+        userId,
+      );
+
+      expect(filename).toBe('Trip to Japan-expenses.xlsx');
+      expect(filenameUtf8).toBe('Trip to Japan-expenses.xlsx');
+
+      const workbook = new ExcelJS.Workbook();
+      // See the matching comment in expenses.service.ts: exceljs's bundled
+      // types declare their own local Buffer interface that doesn't
+      // structurally match Node's real Buffer, even though the runtime value
+      // is a genuine Node Buffer.
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.getWorksheet('Expenses')!;
+      expect(sheet.rowCount).toBe(1);
+      expect(sheet.columnCount).toBe(7);
+      expect(sheet.getRow(1).getCell(1).value).toBe('Date');
+      expect(sheet.getRow(1).getCell(7).value).toBe('Split type');
+    });
+
+    it('produces one data row per expense with comma-joined payer names and the raw category/splitType enum values', async () => {
+      const date = new Date('2026-01-15T00:00:00.000Z');
+      mockPrisma.expense.findMany.mockResolvedValueOnce([
+        {
+          id: 'expense-1',
+          description: 'Hotel',
+          amount: 300,
+          currency: 'USD',
+          category: 'TRAVEL',
+          splitType: 'EVEN',
+          date,
+          payers: [
+            { memberId: 'member-a', member: { id: 'member-a', name: 'Alice' } },
+            { memberId: 'member-b', member: { id: 'member-b', name: 'Bob' } },
+          ],
+          splits: [
+            {
+              memberId: 'member-a',
+              amount: 150,
+              member: { id: 'member-a', name: 'Alice' },
+            },
+            {
+              memberId: 'member-b',
+              amount: 150,
+              member: { id: 'member-b', name: 'Bob' },
+            },
+          ],
+        },
+      ]);
+
+      const { buffer } = await service.exportExpenses(groupId, userId);
+
+      const workbook = new ExcelJS.Workbook();
+      // See the matching comment in expenses.service.ts: exceljs's bundled
+      // types declare their own local Buffer interface that doesn't
+      // structurally match Node's real Buffer, even though the runtime value
+      // is a genuine Node Buffer.
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.getWorksheet('Expenses')!;
+      expect(sheet.rowCount).toBe(2);
+      expect(sheet.columnCount).toBe(9); // 7 fixed + Alice + Bob
+      const row = sheet.getRow(2);
+      expect(row.getCell(1).value).toBe('2026-01-15');
+      expect(row.getCell(2).value).toBe('Hotel');
+      expect(row.getCell(3).value).toBe(300);
+      expect(row.getCell(4).value).toBe('USD');
+      expect(row.getCell(5).value).toBe('TRAVEL');
+      expect(row.getCell(6).value).toBe('Alice, Bob');
+      expect(row.getCell(7).value).toBe('EVEN');
+    });
+
+    it('includes a column for a member removed from the group, and leaves a blank (not 0) cell for a member who did not participate in a given expense', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([
+        {
+          id: 'expense-1',
+          description: 'Groceries',
+          amount: 40,
+          currency: 'USD',
+          category: 'FOOD',
+          splitType: 'EVEN',
+          date: new Date('2026-01-10'),
+          payers: [
+            {
+              memberId: 'member-removed',
+              member: { id: 'member-removed', name: 'Zack' },
+            },
+          ],
+          splits: [
+            {
+              memberId: 'member-removed',
+              amount: 40,
+              member: { id: 'member-removed', name: 'Zack' },
+            },
+          ],
+        },
+        {
+          id: 'expense-2',
+          description: 'Taxi',
+          amount: 20,
+          currency: 'USD',
+          category: 'TRANSPORT',
+          splitType: 'EVEN',
+          date: new Date('2026-01-11'),
+          payers: [
+            {
+              memberId: 'member-active',
+              member: { id: 'member-active', name: 'Amy' },
+            },
+          ],
+          splits: [
+            {
+              memberId: 'member-active',
+              amount: 20,
+              member: { id: 'member-active', name: 'Amy' },
+            },
+          ],
+        },
+      ]);
+
+      const { buffer } = await service.exportExpenses(groupId, userId);
+
+      const workbook = new ExcelJS.Workbook();
+      // See the matching comment in expenses.service.ts: exceljs's bundled
+      // types declare their own local Buffer interface that doesn't
+      // structurally match Node's real Buffer, even though the runtime value
+      // is a genuine Node Buffer.
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.getWorksheet('Expenses')!;
+      // Member columns sorted alphabetically: Amy (col 8), Zack (col 9)
+      expect(sheet.getRow(1).getCell(8).value).toBe('Amy');
+      expect(sheet.getRow(1).getCell(9).value).toBe('Zack');
+      // Row for expense-1 (Zack's groceries): Amy's cell is blank, Zack's cell is 40
+      const row1 = sheet.getRow(2);
+      expect(row1.getCell(8).value).toBeNull();
+      expect(row1.getCell(9).value).toBe(40);
+      // Row for expense-2 (Amy's taxi): Amy's cell is 20, Zack's cell is blank
+      const row2 = sheet.getRow(3);
+      expect(row2.getCell(8).value).toBe(20);
+      expect(row2.getCell(9).value).toBeNull();
+    });
+  });
+
   describe('updateExpense (category preserve-on-omit)', () => {
     const groupId = 'group-1';
     const userId = 'user-1';
@@ -678,9 +920,7 @@ describe('ExpensesService', () => {
       currency: 'USD',
       category: 'FOOD',
       updatedAt,
-      payers: [
-        { memberId: 'member-1', amount: 20, member: { name: 'Alice' } },
-      ],
+      payers: [{ memberId: 'member-1', amount: 20, member: { name: 'Alice' } }],
       splits: [
         { memberId: 'member-1', amount: 10, member: { name: 'Alice' } },
         { memberId: 'member-2', amount: 10, member: { name: 'Bob' } },
@@ -696,9 +936,7 @@ describe('ExpensesService', () => {
       category,
       currency: 'USD',
       date: new Date(),
-      payers: [
-        { memberId: 'member-1', amount: 20, member: { name: 'Alice' } },
-      ],
+      payers: [{ memberId: 'member-1', amount: 20, member: { name: 'Alice' } }],
       splits: [
         { memberId: 'member-1', amount: 10, share: null, percentage: null },
         { memberId: 'member-2', amount: 10, share: null, percentage: null },
