@@ -726,6 +726,15 @@ describe('ExpensesService', () => {
         name: 'Trip to Japan',
         currency: 'USD',
       });
+      // Default: no balance activity at all, so getBalances/getSettlements
+      // (both called internally by exportExpenses) resolve to an empty
+      // BalancesByCurrency ({}) and an empty settlements list ([]). This
+      // fixes the Balances/Settlement summary block at exactly 7 rows
+      // (title, header, blank, title, header, "Everyone is settled up",
+      // blank) for every test below that doesn't override these mocks, so
+      // the expense-list header always lands on row 8 in those tests.
+      mockPrisma.groupMember.findMany.mockResolvedValue([]);
+      mockPrisma.memberBalance.findMany.mockResolvedValue([]);
     });
 
     it('throws ForbiddenException when the caller is not an active member', async () => {
@@ -752,7 +761,7 @@ describe('ExpensesService', () => {
       });
     });
 
-    it('produces a workbook with only the 7 fixed columns and a header row for a zero-expense group', async () => {
+    it('produces a workbook with only the 7 fixed columns and a header row at row 8 for a zero-expense, zero-balance-activity group', async () => {
       mockPrisma.expense.findMany.mockResolvedValueOnce([]);
 
       const { buffer, filename, filenameUtf8 } = await service.exportExpenses(
@@ -770,13 +779,16 @@ describe('ExpensesService', () => {
       // is a genuine Node Buffer.
       await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
       const sheet = workbook.getWorksheet('Expenses')!;
-      expect(sheet.rowCount).toBe(1);
+      expect(sheet.rowCount).toBe(8);
       expect(sheet.columnCount).toBe(7);
-      expect(sheet.getRow(1).getCell(1).value).toBe('Date');
-      expect(sheet.getRow(1).getCell(7).value).toBe('Split type');
+      expect(sheet.getRow(1).getCell(1).value).toBe('Balances');
+      expect(sheet.getRow(4).getCell(1).value).toBe('Settlement plan');
+      expect(sheet.getRow(6).getCell(1).value).toBe('Everyone is settled up');
+      expect(sheet.getRow(8).getCell(1).value).toBe('Date');
+      expect(sheet.getRow(8).getCell(7).value).toBe('Split type');
     });
 
-    it('produces one data row per expense with comma-joined payer names and the raw category/splitType enum values', async () => {
+    it('produces one data row per expense at row 9+ with comma-joined payer names and the raw category/splitType enum values', async () => {
       const date = new Date('2026-01-15T00:00:00.000Z');
       mockPrisma.expense.findMany.mockResolvedValueOnce([
         {
@@ -809,15 +821,12 @@ describe('ExpensesService', () => {
       const { buffer } = await service.exportExpenses(groupId, userId);
 
       const workbook = new ExcelJS.Workbook();
-      // See the matching comment in expenses.service.ts: exceljs's bundled
-      // types declare their own local Buffer interface that doesn't
-      // structurally match Node's real Buffer, even though the runtime value
-      // is a genuine Node Buffer.
       await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
       const sheet = workbook.getWorksheet('Expenses')!;
-      expect(sheet.rowCount).toBe(2);
+      expect(sheet.rowCount).toBe(9);
       expect(sheet.columnCount).toBe(9); // 7 fixed + Alice + Bob
-      const row = sheet.getRow(2);
+      expect(sheet.getRow(8).getCell(1).value).toBe('Date');
+      const row = sheet.getRow(9);
       expect(row.getCell(1).value).toBe('2026-01-15');
       expect(row.getCell(2).value).toBe('Hotel');
       expect(row.getCell(3).value).toBe(300);
@@ -878,23 +887,120 @@ describe('ExpensesService', () => {
       const { buffer } = await service.exportExpenses(groupId, userId);
 
       const workbook = new ExcelJS.Workbook();
-      // See the matching comment in expenses.service.ts: exceljs's bundled
-      // types declare their own local Buffer interface that doesn't
-      // structurally match Node's real Buffer, even though the runtime value
-      // is a genuine Node Buffer.
       await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
       const sheet = workbook.getWorksheet('Expenses')!;
+      expect(sheet.rowCount).toBe(10);
       // Member columns sorted alphabetically: Amy (col 8), Zack (col 9)
-      expect(sheet.getRow(1).getCell(8).value).toBe('Amy');
-      expect(sheet.getRow(1).getCell(9).value).toBe('Zack');
+      expect(sheet.getRow(8).getCell(8).value).toBe('Amy');
+      expect(sheet.getRow(8).getCell(9).value).toBe('Zack');
       // Row for expense-1 (Zack's groceries): Amy's cell is blank, Zack's cell is 40
-      const row1 = sheet.getRow(2);
+      const row1 = sheet.getRow(9);
       expect(row1.getCell(8).value).toBeNull();
       expect(row1.getCell(9).value).toBe(40);
       // Row for expense-2 (Amy's taxi): Amy's cell is 20, Zack's cell is blank
-      const row2 = sheet.getRow(3);
+      const row2 = sheet.getRow(10);
       expect(row2.getCell(8).value).toBe(20);
       expect(row2.getCell(9).value).toBeNull();
+    });
+
+    it('shows one Balances row per member for a currency with a non-zero balance (including a member at exactly 0), and omits a currency where every member is exactly 0', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-a', name: 'Alice', avatarUrl: null, deletedAt: null },
+        { id: 'member-b', name: 'Bob', avatarUrl: null, deletedAt: null },
+        { id: 'member-c', name: 'Carol', avatarUrl: null, deletedAt: null },
+      ]);
+      mockPrisma.memberBalance.findMany.mockResolvedValue([
+        { memberId: 'member-a', currency: 'USD', balance: 30 },
+        { memberId: 'member-b', currency: 'USD', balance: -30 },
+        { memberId: 'member-c', currency: 'USD', balance: 0 },
+        { memberId: 'member-a', currency: 'EUR', balance: 0 },
+        { memberId: 'member-b', currency: 'EUR', balance: 0 },
+        { memberId: 'member-c', currency: 'EUR', balance: 0 },
+      ]);
+
+      const { buffer } = await service.exportExpenses(groupId, userId);
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.getWorksheet('Expenses')!;
+      expect(sheet.getRow(1).getCell(1).value).toBe('Balances');
+      expect(sheet.getRow(2).getCell(1).value).toBe('Member');
+      expect(sheet.getRow(2).getCell(2).value).toBe('Currency');
+      expect(sheet.getRow(2).getCell(3).value).toBe('Net balance');
+      // USD has a non-zero balance, so all 3 members show, Carol included at 0.
+      expect(sheet.getRow(3).getCell(1).value).toBe('Alice');
+      expect(sheet.getRow(3).getCell(2).value).toBe('USD');
+      expect(sheet.getRow(3).getCell(3).value).toBe(30);
+      expect(sheet.getRow(4).getCell(1).value).toBe('Bob');
+      expect(sheet.getRow(4).getCell(3).value).toBe(-30);
+      expect(sheet.getRow(5).getCell(1).value).toBe('Carol');
+      expect(sheet.getRow(5).getCell(3).value).toBe(0);
+      // EUR is entirely zero, so it's omitted — row 6 is the blank separator,
+      // row 7 is "Settlement plan", not another currency's data.
+      expect(sheet.getRow(6).getCell(1).value).toBeNull();
+      expect(sheet.getRow(7).getCell(1).value).toBe('Settlement plan');
+      // The expense-list header (row 11) still lands correctly after the
+      // longer, real-data summary block.
+      expect(sheet.getRow(11).getCell(1).value).toBe('Date');
+      expect(sheet.rowCount).toBe(11);
+    });
+
+    it('shows one Settlement plan row per recommended payment, in major units', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-a', name: 'Alice', avatarUrl: null, deletedAt: null },
+        { id: 'member-b', name: 'Bob', avatarUrl: null, deletedAt: null },
+      ]);
+      mockPrisma.memberBalance.findMany.mockResolvedValue([
+        { memberId: 'member-a', currency: 'USD', balance: 50 },
+        { memberId: 'member-b', currency: 'USD', balance: -50 },
+      ]);
+
+      const { buffer } = await service.exportExpenses(groupId, userId);
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.getWorksheet('Expenses')!;
+      expect(sheet.getRow(6).getCell(1).value).toBe('Settlement plan');
+      expect(sheet.getRow(7).getCell(1).value).toBe('From');
+      expect(sheet.getRow(7).getCell(2).value).toBe('To');
+      expect(sheet.getRow(7).getCell(3).value).toBe('Amount');
+      expect(sheet.getRow(7).getCell(4).value).toBe('Currency');
+      const row = sheet.getRow(8);
+      expect(row.getCell(1).value).toBe('Bob'); // debtor pays...
+      expect(row.getCell(2).value).toBe('Alice'); // ...the creditor
+      expect(row.getCell(3).value).toBe(50); // major units, not 5000 cents
+      expect(row.getCell(4).value).toBe('USD');
+      expect(sheet.getRow(10).getCell(1).value).toBe('Date');
+      expect(sheet.rowCount).toBe(10);
+    });
+
+    it('shows "Everyone is settled up" when getSettlements returns no recommended payments, even with non-empty but fully-zero balance data', async () => {
+      mockPrisma.expense.findMany.mockResolvedValueOnce([]);
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-a', name: 'Alice', avatarUrl: null, deletedAt: null },
+        { id: 'member-b', name: 'Bob', avatarUrl: null, deletedAt: null },
+      ]);
+      mockPrisma.memberBalance.findMany.mockResolvedValue([
+        { memberId: 'member-a', currency: 'USD', balance: 0 },
+        { memberId: 'member-b', currency: 'USD', balance: 0 },
+      ]);
+
+      const { buffer } = await service.exportExpenses(groupId, userId);
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.getWorksheet('Expenses')!;
+      // The USD currency is present but fully zero, so it's omitted from
+      // Balances (row 3 is the blank separator, not a data row).
+      expect(sheet.getRow(3).getCell(1).value).toBeNull();
+      expect(sheet.getRow(4).getCell(1).value).toBe('Settlement plan');
+      const row = sheet.getRow(6);
+      expect(row.getCell(1).value).toBe('Everyone is settled up');
+      expect(row.getCell(2).value).toBeNull();
+      expect(sheet.getRow(8).getCell(1).value).toBe('Date');
+      expect(sheet.rowCount).toBe(8);
     });
   });
 
