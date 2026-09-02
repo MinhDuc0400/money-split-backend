@@ -3,6 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventsGateway } from '../events/events.gateway';
+import { GroupMembershipService } from './group-membership.service';
 import { withIdempotency } from '../helpers/idempotency.helper';
 import { SplitType } from '@prisma/client';
 import ExcelJS from 'exceljs';
@@ -61,6 +62,7 @@ describe('ExpensesService', () => {
         ExpensesService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: EventsGateway, useValue: mockEventsGateway },
+        GroupMembershipService,
       ],
     }).compile();
 
