@@ -13,6 +13,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
+import { ExpensesBalancesService } from './expenses-balances.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -41,7 +42,10 @@ import '../common/interfaces/request-user.interface';
 @UseGuards(JwtAuthGuard)
 @Controller('groups/:groupId')
 export class ExpensesController {
-  constructor(private readonly expensesService: ExpensesService) {}
+  constructor(
+    private readonly expensesService: ExpensesService,
+    private readonly expensesBalancesService: ExpensesBalancesService,
+  ) {}
 
   @Post('expenses')
   @ApiOperation({ summary: 'Create a new expense in a group' })
@@ -123,7 +127,7 @@ export class ExpensesController {
     @Req() req: Request,
   ): Promise<BalancesByCurrency> {
     const userId = req.user!.id;
-    return this.expensesService.getBalances(groupId, userId);
+    return this.expensesBalancesService.getBalances(groupId, userId);
   }
 
   @Get('balances/me')
@@ -134,7 +138,7 @@ export class ExpensesController {
     @Req() req: Request,
   ): Promise<UserBalanceResponse> {
     const userId = req.user!.id;
-    return this.expensesService.getUserBalance(groupId, userId);
+    return this.expensesBalancesService.getUserBalance(groupId, userId);
   }
 
   @Get('settlements')
@@ -145,7 +149,7 @@ export class ExpensesController {
     @Req() req: Request,
   ): Promise<RecommendedSettlement[]> {
     const userId = req.user!.id;
-    return this.expensesService.getSettlements(groupId, userId);
+    return this.expensesBalancesService.getSettlements(groupId, userId);
   }
 
   @Get('expenses/by-category')
