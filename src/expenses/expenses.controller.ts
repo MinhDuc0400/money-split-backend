@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 import { ExpensesBalancesService } from './expenses-balances.service';
+import { ExpensesAnalyticsService } from './expenses-analytics.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -45,6 +46,7 @@ export class ExpensesController {
   constructor(
     private readonly expensesService: ExpensesService,
     private readonly expensesBalancesService: ExpensesBalancesService,
+    private readonly expensesAnalyticsService: ExpensesAnalyticsService,
   ) {}
 
   @Post('expenses')
@@ -166,7 +168,7 @@ export class ExpensesController {
     @Query('to') to?: string,
   ): Promise<CategorySpending[]> {
     const userId = req.user!.id;
-    return this.expensesService.getSpendingByCategory(
+    return this.expensesAnalyticsService.getSpendingByCategory(
       groupId,
       userId,
       currency,
@@ -193,7 +195,7 @@ export class ExpensesController {
   ): Promise<PersonSpending[]> {
     const userId = req.user!.id;
     const effectiveMetric = metric === 'share' ? 'share' : 'paid';
-    return this.expensesService.getSpendingByPerson(
+    return this.expensesAnalyticsService.getSpendingByPerson(
       groupId,
       userId,
       currency,
@@ -220,7 +222,7 @@ export class ExpensesController {
     @Query('to') to?: string,
   ): Promise<PersonCategorySpending[]> {
     const userId = req.user!.id;
-    return this.expensesService.getSpendingByPersonCategory(
+    return this.expensesAnalyticsService.getSpendingByPersonCategory(
       groupId,
       userId,
       currency,
@@ -247,7 +249,7 @@ export class ExpensesController {
     const parsedLimit = limit
       ? Math.min(Math.max(parseInt(limit, 10) || 5, 1), 20)
       : 5;
-    return this.expensesService.getTopExpenses(
+    return this.expensesAnalyticsService.getTopExpenses(
       groupId,
       userId,
       currency,
