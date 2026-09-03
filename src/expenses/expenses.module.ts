@@ -6,6 +6,7 @@ import { EventsModule } from '../events/events.module';
 import { GroupMembershipService } from './group-membership.service';
 import { ExpensesBalancesService } from './expenses-balances.service';
 import { ExpensesAnalyticsService } from './expenses-analytics.service';
+import { ExpensesExportService } from './expenses-export.service';
 
 @Module({
   imports: [PrismaModule, EventsModule],
@@ -15,6 +16,7 @@ import { ExpensesAnalyticsService } from './expenses-analytics.service';
     GroupMembershipService,
     ExpensesBalancesService,
     ExpensesAnalyticsService,
+    ExpensesExportService,
   ],
   exports: [ExpensesService],
 })
