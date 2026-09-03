@@ -43,8 +43,14 @@ export class ExpensesExportService {
     // members/balances a couple of extra times; accepted as a deliberate
     // simplicity-over-micro-optimization tradeoff (bounded by group size,
     // not expense count, and this endpoint isn't a hot path).
-    const balancesByCurrency = await this.balancesService.getBalances(groupId, userId);
-    const settlements = await this.balancesService.getSettlements(groupId, userId);
+    const balancesByCurrency = await this.balancesService.getBalances(
+      groupId,
+      userId,
+    );
+    const settlements = await this.balancesService.getSettlements(
+      groupId,
+      userId,
+    );
 
     // Distinct members who ever appeared as a payer or split participant across
     // this group's *entire* expense history — deliberately not filtered to
