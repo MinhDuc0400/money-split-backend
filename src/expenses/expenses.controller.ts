@@ -15,6 +15,7 @@ import {
 import { ExpensesService } from './expenses.service';
 import { ExpensesBalancesService } from './expenses-balances.service';
 import { ExpensesAnalyticsService } from './expenses-analytics.service';
+import { ExpensesExportService } from './expenses-export.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -47,6 +48,7 @@ export class ExpensesController {
     private readonly expensesService: ExpensesService,
     private readonly expensesBalancesService: ExpensesBalancesService,
     private readonly expensesAnalyticsService: ExpensesAnalyticsService,
+    private readonly expensesExportService: ExpensesExportService,
   ) {}
 
   @Post('expenses')
@@ -271,7 +273,7 @@ export class ExpensesController {
   ): Promise<void> {
     const userId = req.user!.id;
     const { buffer, filename, filenameUtf8 } =
-      await this.expensesService.exportExpenses(groupId, userId);
+      await this.expensesExportService.exportExpenses(groupId, userId);
 
     res.set({
       'Content-Type':
