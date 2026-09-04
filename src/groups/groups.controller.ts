@@ -15,11 +15,14 @@ import { UpdateGroupDto } from './dto/update-group.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../common/decorators/public.decorator';
+import { GroupInvitePreview } from './types/group-invite-preview.type';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiSecurity,
 } from '@nestjs/swagger';
 import { Group, GroupMember } from '@prisma/client';
 import type { Request } from 'express';
@@ -67,6 +70,23 @@ export class GroupsController {
     return this.groupsService.findAll(userId);
   }
 
+  @Public()
+  @ApiSecurity({})
+  @Get('preview/:inviteCode')
+  @ApiOperation({
+    summary: 'Preview a group by invite code (no authentication required)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns minimal, non-sensitive group info.',
+  })
+  @ApiResponse({ status: 404, description: 'Invite code not found.' })
+  previewByInviteCode(
+    @Param('inviteCode') inviteCode: string,
+  ): Promise<GroupInvitePreview> {
+    return this.groupsService.previewByInviteCode(inviteCode);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a group by id' })
   @ApiResponse({ status: 200, description: 'Return the group.' })
@@ -95,7 +115,10 @@ export class GroupsController {
   @Delete(':id/leave')
   @ApiOperation({ summary: 'Leave a group' })
   @ApiResponse({ status: 200, description: 'Successfully left the group.' })
-  @ApiResponse({ status: 403, description: 'Unsettled balances or owner cannot leave.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Unsettled balances or owner cannot leave.',
+  })
   @ApiResponse({ status: 404, description: 'Not a member.' })
   leave(@Req() req: Request, @Param('id') id: string): Promise<void> {
     const userId = req.user!.id;
@@ -152,7 +175,8 @@ export class GroupsController {
   @ApiResponse({ status: 200, description: 'The guest has been removed.' })
   @ApiResponse({
     status: 403,
-    description: 'Not a member of this group, or the guest has an unsettled balance.',
+    description:
+      'Not a member of this group, or the guest has an unsettled balance.',
   })
   @ApiResponse({ status: 404, description: 'Guest not found.' })
   removeGuest(

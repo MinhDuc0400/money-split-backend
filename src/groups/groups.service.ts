@@ -12,6 +12,7 @@ import { AddGuestDto } from './dto/add-guest.dto';
 import { Group, GroupMember, GroupRole } from '@prisma/client';
 import * as crypto from 'crypto';
 import { EventsGateway } from '../events/events.gateway';
+import { GroupInvitePreview } from './types/group-invite-preview.type';
 
 @Injectable()
 export class GroupsService {
@@ -181,7 +182,9 @@ export class GroupsService {
       });
 
       if (!member || member.role !== GroupRole.OWNER || member.deletedAt) {
-        throw new ForbiddenException('Only the group owner can delete the group');
+        throw new ForbiddenException(
+          'Only the group owner can delete the group',
+        );
       }
 
       // All members must be settled before the group can be deleted.
@@ -221,7 +224,9 @@ export class GroupsService {
       }
 
       if (member.role === GroupRole.OWNER) {
-        throw new ForbiddenException('Group owner cannot leave. Transfer ownership or delete the group.');
+        throw new ForbiddenException(
+          'Group owner cannot leave. Transfer ownership or delete the group.',
+        );
       }
 
       // Check if user has any unsettled balances in this group.
@@ -236,7 +241,9 @@ export class GroupsService {
       });
 
       if (unsettledBalances.length > 0) {
-        throw new ForbiddenException('You must settle all balances before leaving the group');
+        throw new ForbiddenException(
+          'You must settle all balances before leaving the group',
+        );
       }
 
       await tx.groupMember.update({
@@ -306,6 +313,38 @@ export class GroupsService {
     });
     this.eventsGateway.emitMemberJoined(group.id, member);
     return member;
+  }
+
+  /**
+   * Read-only preview of a group by invite code, for the /join/:code
+   * frontend page. Unlike join(), this does not require the caller to be
+   * authenticated and never adds anyone to the group. Returns only
+   * non-sensitive fields — no member list, no financial data.
+   */
+  async previewByInviteCode(inviteCode: string): Promise<GroupInvitePreview> {
+    const group = await this.prisma.group.findUnique({
+      where: {
+        inviteCode: inviteCode.toUpperCase(),
+        deletedAt: null,
+      },
+      include: {
+        _count: {
+          select: { members: { where: { deletedAt: null } } },
+        },
+      },
+    });
+
+    if (!group) {
+      throw new NotFoundException(
+        `Group with invite code "${inviteCode}" not found`,
+      );
+    }
+
+    return {
+      name: group.name,
+      currency: group.currency,
+      memberCount: group._count.members,
+    };
   }
 
   /** Throws ForbiddenException if userId isn't an active member of groupId. */

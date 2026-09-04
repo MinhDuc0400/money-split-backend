@@ -8,6 +8,9 @@ describe('GroupsService', () => {
   let service: GroupsService;
 
   const mockPrisma = {
+    group: {
+      findUnique: jest.fn(),
+    },
     groupMember: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -226,6 +229,53 @@ describe('GroupsService', () => {
       expect(mockEventsGateway.emitMemberLeft).toHaveBeenCalledWith(
         groupId,
         guestId,
+      );
+    });
+  });
+
+  describe('previewByInviteCode', () => {
+    const inviteCode = 'AB123456';
+
+    it('returns name, currency, and memberCount for a matching non-deleted group', async () => {
+      mockPrisma.group.findUnique.mockResolvedValueOnce({
+        id: 'group-1',
+        name: 'Trip to Japan',
+        currency: 'USD',
+        _count: { members: 4 },
+      });
+
+      const result = await service.previewByInviteCode(inviteCode);
+
+      expect(result).toEqual({
+        name: 'Trip to Japan',
+        currency: 'USD',
+        memberCount: 4,
+      });
+    });
+
+    it('uppercases the invite code before looking it up, regardless of input case', async () => {
+      mockPrisma.group.findUnique.mockResolvedValueOnce({
+        id: 'group-1',
+        name: 'Trip to Japan',
+        currency: 'USD',
+        _count: { members: 1 },
+      });
+
+      await service.previewByInviteCode('ab123456');
+
+      expect(mockPrisma.group.findUnique).toHaveBeenCalledWith({
+        where: { inviteCode: 'AB123456', deletedAt: null },
+        include: {
+          _count: { select: { members: { where: { deletedAt: null } } } },
+        },
+      });
+    });
+
+    it('throws NotFoundException when no matching non-deleted group exists', async () => {
+      mockPrisma.group.findUnique.mockResolvedValueOnce(null);
+
+      await expect(service.previewByInviteCode(inviteCode)).rejects.toThrow(
+        NotFoundException,
       );
     });
   });
