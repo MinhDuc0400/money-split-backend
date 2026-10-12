@@ -5,6 +5,7 @@ import { EventsGateway } from '../events/events.gateway';
 import { GroupMembershipService } from './group-membership.service';
 import { withIdempotency } from '../helpers/idempotency.helper';
 import { SplitType } from '@prisma/client';
+import { BadRequestException } from '@nestjs/common';
 
 jest.mock('../helpers/idempotency.helper');
 const mockWithIdempotency = withIdempotency as jest.MockedFunction<
@@ -97,6 +98,10 @@ describe('ExpensesService', () => {
         userId,
         deletedAt: null,
       });
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-1', deletedAt: null },
+        { id: 'member-2', deletedAt: null },
+      ]);
     });
 
     it('passes the idempotency key through to withIdempotency and returns its result', async () => {
@@ -129,6 +134,37 @@ describe('ExpensesService', () => {
         'POST /groups/:id/expenses',
         expect.any(Function),
       );
+    });
+
+    it('rejects a split participant who is not an active member of the group, without writing anything', async () => {
+      mockPrisma.groupMember.findMany.mockReset();
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-1', deletedAt: null },
+      ]);
+      mockWithIdempotency.mockResolvedValue({ id: 'expense-3' } as never);
+
+      await expect(service.create(groupId, userId, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockWithIdempotency).not.toHaveBeenCalled();
+    });
+
+    it('rejects a payer who is not an active member of the group', async () => {
+      mockPrisma.groupMember.findMany.mockReset();
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-1', deletedAt: null },
+        { id: 'member-2', deletedAt: null },
+      ]);
+      mockWithIdempotency.mockResolvedValue({ id: 'expense-4' } as never);
+      const outsiderPays = {
+        ...dto,
+        payers: [{ memberId: 'outsider', amount: 20 }],
+      };
+
+      await expect(
+        service.create(groupId, userId, outsiderPays),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockWithIdempotency).not.toHaveBeenCalled();
     });
   });
 
@@ -184,6 +220,10 @@ describe('ExpensesService', () => {
         userId,
         deletedAt: null,
       });
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-1', deletedAt: null },
+        { id: 'member-2', deletedAt: null },
+      ]);
       mockPrisma.expense.update.mockResolvedValue({ id: expenseId });
       mockPrisma.expensePayer.createMany.mockResolvedValue({ count: 1 });
       mockPrisma.expenseSplit.createMany.mockResolvedValue({ count: 2 });
@@ -225,6 +265,41 @@ describe('ExpensesService', () => {
       expect(result.category).toBe('TRANSPORT');
       const updateCall = mockPrisma.expense.update.mock.calls[0][0];
       expect(updateCall.data.category).toBe('TRANSPORT');
+    });
+
+    it('rejects an edit that adds a participant who is not an active member of the group, leaving the expense untouched', async () => {
+      mockPrisma.expense.findUnique.mockResolvedValueOnce(oldExpense);
+      const dto = {
+        ...baseDto,
+        splits: [{ memberId: 'member-1' }, { memberId: 'outsider' }],
+      };
+
+      await expect(
+        service.updateExpense(groupId, expenseId, userId, dto as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.expense.update).not.toHaveBeenCalled();
+      expect(mockPrisma.memberBalance.upsert).not.toHaveBeenCalled();
+    });
+
+    it('allows an edit that keeps a participant who has since left the group', async () => {
+      mockPrisma.groupMember.findMany.mockReset();
+      mockPrisma.groupMember.findMany.mockResolvedValue([
+        { id: 'member-1', deletedAt: null },
+        { id: 'member-2', deletedAt: new Date('2026-02-01T00:00:00.000Z') },
+      ]);
+      mockPrisma.expense.findUnique
+        .mockResolvedValueOnce(oldExpense)
+        .mockResolvedValueOnce(buildFinalExpense('FOOD'));
+
+      const result = await service.updateExpense(
+        groupId,
+        expenseId,
+        userId,
+        baseDto as never,
+      );
+
+      expect(result.id).toBe(expenseId);
+      expect(mockPrisma.expense.update).toHaveBeenCalledTimes(1);
     });
   });
 });

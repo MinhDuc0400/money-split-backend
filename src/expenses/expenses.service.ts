@@ -37,11 +37,18 @@ export class ExpensesService {
     // 1. Verify group membership
     await this.groupMembership.assertActiveMember(groupId, userId);
 
-    // 2. Validate payers total using integer cents
+    // 2. Every payer and split participant must be an active member of
+    // this group - the DTO only proves the ids are UUIDs.
+    await this.groupMembership.assertActiveMembers(groupId, [
+      ...dto.payers.map((p) => p.memberId),
+      ...dto.splits.map((s) => s.memberId),
+    ]);
+
+    // 3. Validate payers total using integer cents
     const totalCents = toCents(dto.amount);
     validatePayersTotal(dto.payers, totalCents, dto.amount);
 
-    // 3. Calculate splits in integer cents
+    // 4. Calculate splits in integer cents
     const splitData = calculateSplitData(
       dto.splitType,
       totalCents,
@@ -55,7 +62,7 @@ export class ExpensesService {
       userId,
       'POST /groups/:id/expenses',
       async (tx) => {
-        // 4. Create the expense
+        // 5. Create the expense
         const expense = await tx.expense.create({
           data: {
             groupId,
@@ -68,7 +75,7 @@ export class ExpensesService {
           },
         });
 
-        // 5. Create payers
+        // 6. Create payers
         await tx.expensePayer.createMany({
           data: dto.payers.map((p) => ({
             expenseId: expense.id,
@@ -77,7 +84,7 @@ export class ExpensesService {
           })),
         });
 
-        // 6. Create splits
+        // 7. Create splits
         await tx.expenseSplit.createMany({
           data: splitData.map((s) => ({
             expenseId: expense.id,
@@ -90,7 +97,7 @@ export class ExpensesService {
 
         const currency = dto.currency || 'USD';
 
-        // 7. Update MemberBalances & Debts
+        // 8. Update MemberBalances & Debts
         await this.applyExpenseEffects(
           tx,
           groupId,
@@ -299,6 +306,17 @@ export class ExpensesService {
     const date = dto.date || new Date();
     const payers = dto.payers;
     const splits = dto.splits;
+
+    // Members already on this expense stay editable even if they have left
+    // the group since; anyone newly added must be an active member.
+    await this.groupMembership.assertActiveMembers(
+      groupId,
+      [...payers.map((p) => p.memberId), ...splits.map((s) => s.memberId)],
+      [
+        ...oldExpense.payers.map((p) => p.memberId),
+        ...oldExpense.splits.map((s) => s.memberId),
+      ],
+    );
 
     // Re-validate payers and calculate new splits
     const totalCents = toCents(amount);
